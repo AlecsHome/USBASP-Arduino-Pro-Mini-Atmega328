@@ -1,0 +1,11 @@
+‘ьюзы установленные по умолчанию в Arduino (только с ATmega328)
+Arduino Uno
+Low Fuse 0xFF
+High Fuse 0xDE
+Extended Fuse 0x05
+
+Arduino Pro or Pro Mini (5V, 16 MHz) w/ ATmega328
+Low Fuse 0xFF
+High Fuse 0xDA
+Extended Fuse 0x05
+
