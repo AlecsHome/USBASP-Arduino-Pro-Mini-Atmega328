@@ -1,16 +1,9 @@
 ﻿/*
  * USBasp - USB in-circuit programmer for Atmel AVR controllers
- *
- * Thomas Fischl <tfischl@gmx.de>
- *
  * License........: GNU GPL v2 (see Readme.txt)
- * Target.........: ATMega8 at 12 MHz
+ * Target.........: ATMega328P at 16 MHz
  * Creation Date..: 2005-02-20
- * Last change....: 2009-02-28
- *
- * PC2 SCK speed option.
- * GND  -> slow (8khz SCK),
- * open -> software set speed (default is 375kHz SCK)
+ * Last change....: 2025-10-28
  */
 
 #include <avr/io.h>
