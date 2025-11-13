@@ -1,9 +1,16 @@
 ﻿/*
  * USBasp - USB in-circuit programmer for Atmel AVR controllers
+ *
+ * Thomas Fischl <tfischl@gmx.de>
+ *
  * License........: GNU GPL v2 (see Readme.txt)
- * Target.........: ATMega328P at 16 MHz
+ * Target.........: ATMega8 at 12 MHz
  * Creation Date..: 2005-02-20
- * Last change....: 2025-10-28
+ * Last change....: 2009-02-28
+ *
+ * PC2 SCK speed option.
+ * GND  -> slow (8khz SCK),
+ * open -> software set speed (default is 375kHz SCK)
  */
 
 #include <avr/io.h>
@@ -57,6 +64,20 @@ static void setupSPIState(uint8_t mode, uint8_t *data) {
     spi_cs_hi = data[2];
     prog_nbytes = (data[7] << 8) | data[6];
     prog_state = mode;
+}
+
+static void setupWriteOperation(uint8_t *data, uint8_t new_state,
+                                uint8_t pagesize, uint8_t flags) {
+    if (!prog_address_newmode)
+        prog_address = (data[3] << 8) | data[2];
+
+    prog_pagesize = pagesize;
+    prog_blockflags = flags;
+    if (flags & PROG_BLOCKFLAG_FIRST)
+        prog_pagecounter = pagesize;
+
+    prog_nbytes = (data[7] << 8) | data[6];
+    prog_state = new_state;
 }
 
 /* -------------------------------------------------------------------------------- */
@@ -275,30 +296,14 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 		len = 1;
 
 	} else if (data[1] == USBASP_FUNC_WRITEFLASH) {
-
-		if (!prog_address_newmode)
-		prog_address = (data[3] << 8) | data[2];
-
-		prog_pagesize = data[4];
-		prog_blockflags = data[5] & 0x0F;
-		prog_pagesize += (((unsigned int) data[5] & 0xF0) << 4);
-		if (prog_blockflags & PROG_BLOCKFLAG_FIRST) {
-  		  prog_pagecounter = prog_pagesize;
-		}
-		prog_nbytes = (data[7] << 8) | data[6];
-		prog_state = PROG_STATE_WRITEFLASH;
-		len = USB_NO_MSG; /* multiple out */
+    		uint8_t pagesize = data[4] + (((data[5] & 0xF0) << 4));
+    		uint8_t flags = data[5] & 0x0F;
+    		setupWriteOperation(data, PROG_STATE_WRITEFLASH, pagesize, flags);
+    		len = USB_NO_MSG;
 
 	} else if (data[1] == USBASP_FUNC_WRITEEEPROM) {
-
-		if (!prog_address_newmode)
-		prog_address = (data[3] << 8) | data[2];
-
-		prog_pagesize = 0;
-		prog_blockflags = 0;
-		prog_nbytes = (data[7] << 8) | data[6];
-		prog_state = PROG_STATE_WRITEEEPROM;
-		len = USB_NO_MSG; /* multiple out */
+    		setupWriteOperation(data, PROG_STATE_WRITEEEPROM, 0, 0);
+    		len = USB_NO_MSG;
 
 	} else if (data[1] == USBASP_FUNC_SETLONGADDRESS) {
 
