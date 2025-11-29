@@ -787,6 +787,7 @@ int main(void) {
     /* ----------- USB ----------- */
     /* init timer */
     clockInit();
+    ispLoadLastSpeed();
 
     /* Инициализация генератора частоты */
     init_frequency_generator();
