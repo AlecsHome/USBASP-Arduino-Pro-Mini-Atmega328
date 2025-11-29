@@ -19,13 +19,10 @@
 #include <stddef.h>
 #include <avr/eeprom.h>
 
-// Любой свободный байт в EEPROM
-#define EEPROM_SPEED_ADDR 0x10U   // просто 16-ый байт EEPROM
-
 extern uchar prog_sck;
 uchar (*ispTransmit)(uchar) = NULL;
 
-static uchar last_success_speed = USBASP_ISP_SCK_AUTO;
+uint8_t last_success_speed = USBASP_ISP_SCK_AUTO;
 
 // Явный массив скоростей от САМОЙ БЫСТРОЙ к САМОЙ МЕДЛЕННОЙ
 // Порядок ВАЖЕН - от быстрой к медленной!

@@ -16,7 +16,6 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <avr/pgmspace.h>
-
 #include "usbasp.h"
 #include "usbdrv.h"
 #include "isp.h"
@@ -26,6 +25,7 @@
 #include "tpi_defs.h"
 #include "I2c.h"
 #include "microwire.h"
+#include <avr/eeprom.h>
 
 /* Макрос для быстрой проверки минимального значения */
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -308,12 +308,20 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 		/* set new address */
 		prog_address = *((unsigned long*) &data[2]);
 
+                //# «сбросить» сохранённую скорость
+		// avrdude -c usbasp -x usbasparg=0xFF        # через -x (поддерживается)
 	} else if (data[1] == USBASP_FUNC_SETISPSCK) {
+    		uint8_t newSCK = data[2];
 
-		/* set sck option */
-		prog_sck = data[2];
-		replyBuffer[0] = 0;
-		len = 1;
+    		if (newSCK == 0xFF) {        /* «секретный» код сброса */
+        	 eeprom_update_byte((uint8_t *)EEPROM_SPEED_ADDR, 0xFF);
+        	 last_success_speed = USBASP_ISP_SCK_AUTO;
+        	 replyBuffer[0] = 0;         /* OK */
+    		} else {                     /* обычная установка SCK */
+        	prog_sck = newSCK;
+        	replyBuffer[0] = 0;
+    		 }
+    		len = 1;
 
        	} else if (data[1] == USBASP_FUNC_GETISPSCK) {
     		replyBuffer[0] = 0;
