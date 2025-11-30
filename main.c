@@ -96,17 +96,20 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 	
 	if (data[1] == USBASP_FUNC_CONNECT) {
 
-		/* set SCK speed */
-		
-		ispSetSCKOption(prog_sck);
-		
-		/* set compatibility mode of address delivering */
-		prog_address_newmode = 0;
+    	  ispSetSCKOption(prog_sck);
+    	  prog_address_newmode = 0;
 
-		ledRedOn();
-		ispConnect();
-                replyBuffer[0] = ispEnterProgrammingMode(); // Потом пытаемся войти в режим программирования
-    		len = 1;
+    	ledRedOn();
+    	ispConnect();
+
+    	uint8_t rc = ispEnterProgrammingMode();
+    	 if (rc != 0) {
+           ispDisconnect();        // <-- критично
+           last_success_speed = USBASP_ISP_SCK_AUTO;   // <-- сброс  
+	  }
+
+        replyBuffer[0] = rc;
+	len = 1;
 								
 //spi --------------------------------------------------------------
 	} else if (data[1] == USBASP_FUNC_SPI_CONNECT) {
@@ -308,19 +311,10 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 		/* set new address */
 		prog_address = *((unsigned long*) &data[2]);
 
-                //# «сбросить» сохранённую скорость
-		// avrdude -c usbasp -x usbasparg=0xFF        # через -x (поддерживается)
 	} else if (data[1] == USBASP_FUNC_SETISPSCK) {
-    		uint8_t newSCK = data[2];
-
-    		if (newSCK == 0xFF) {        /* «секретный» код сброса */
-        	 eeprom_update_byte((uint8_t *)EEPROM_SPEED_ADDR, 0xFF);
-        	 last_success_speed = USBASP_ISP_SCK_AUTO;
-        	 replyBuffer[0] = 0;         /* OK */
-    		} else {                     /* обычная установка SCK */
-        	prog_sck = newSCK;
-        	replyBuffer[0] = 0;
-    		 }
+    		// Обычная установка скорости (без специальных кодов сброса)
+    		prog_sck = data[2];
+    		replyBuffer[0] = 0;
     		len = 1;
 
        	} else if (data[1] == USBASP_FUNC_GETISPSCK) {
@@ -763,15 +757,14 @@ void init_frequency_generator(void) {
     TCCR1A |= (1 << COM1A0);
 
 }
-
 int main(void) {
     /* no pullups on USB and ISP pins */
     PORTD = 0;
-    
+
     /* --- USB D+ (PD2) и D- (PD7) --- */
     PORTD &= ~((1 << PD2) | (1 << PD7)); // D+ и D- = 0
     DDRD  |= (1 << PD2) | (1 << PD7);    // выходы, low
-    _delay_ms(25);;                       // >10 мс (USB 2.0 spec)
+    _delay_ms(50);                       // ?10 мс (USB 2.0 spec)
     DDRD  &= ~((1 << PD2) | (1 << PD7)); // возвращаем во входы
 
     // Теперь настраиваем порт B: все входы, кроме PB1
@@ -783,19 +776,18 @@ int main(void) {
     DDRC &= ~(1 << PC2);
     // Включим подтяжки для остальных пинов, включая PC2
     PORTC |= (1 << PC2) | (1 << PC3) | (1 << PC4) | (1 << PC5);
-   
+
     /* ----------- индикация ----------- */
     ledRedOn();
-     _delay_ms(250);
+    _delay_ms(100);
     ledRedOff();
-    ledGreenOn();  
-    _delay_ms(250);
+    ledGreenOn();
+    _delay_ms(100);
     ledGreenOff();
-   
+
     /* ----------- USB ----------- */
     /* init timer */
     clockInit();
-    ispLoadLastSpeed();
 
     /* Инициализация генератора частоты */
     init_frequency_generator();
@@ -804,10 +796,11 @@ int main(void) {
     usbInit();
 
     sei();
-    
+
     for (;;) {
         usbPoll();
     }
     return 0;
 }
+
 

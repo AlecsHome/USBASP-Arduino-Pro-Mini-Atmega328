@@ -86,9 +86,11 @@ void ispSaveSpeedToEEPROM(uchar speed);
 
 void ispLoadLastSpeed(void);
 
+void ispResetStoredSpeed(void);
+
 #endif /* __isp_h_included__ */
 
 #define EEPROM_SPEED_ADDR  0x10U   // одно место определени€
 extern uint8_t last_success_speed; // объ€вление, а не определение
-
+//extern uint8_t last_saved_speed;
 #endif
