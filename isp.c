@@ -12,7 +12,7 @@
 #include <avr/io.h>
 #include "isp.h"
 #include "clock.h"
-//#include <util/delay.h> 
+#include <util/delay.h> 
 #include "usbasp.h"
 #include <avr/pgmspace.h> //  для авто-подбора в программной памяти
 #include <avr/interrupt.h>
@@ -259,68 +259,69 @@ void ispResetStoredSpeed(void) {
     last_success_speed = USBASP_ISP_SCK_AUTO;
 }
 
-uchar ispEnterProgrammingMode(void) {
-    uchar check, check2;
-    uchar speed_idx;
+/* Попытка войти в режим программирования с заданной скоростью */
+static uchar tryEnterProgMode(uchar speed)
+{
+    ispSetSCKOption(speed);
 
-    // Пробуем последнюю успешную скорость первой
+    /* адаптивные тайминги сброса */
+    uint8_t pulse = (speed <= USBASP_ISP_SCK_32) ? 15 : 1;
+    uint8_t delay = (speed <= USBASP_ISP_SCK_32) ? 250 : 63;
+
+    for (uchar tries = 3; tries > 0; tries--) {
+        ISP_OUT |= (1 << ISP_RST);
+        clockWait(pulse);
+        ISP_OUT &= ~(1 << ISP_RST);
+        clockWait(delay);
+
+        ispTransmit(0xAC);
+        ispTransmit(0x53);
+        uchar check  = ispTransmit(0);
+        uchar check2 = ispTransmit(0);
+
+        if (check == 0x53 && check2 == 0x00) {
+            return 0; /* успех */
+        }
+        _delay_ms(5);
+    }
+    return 1; /* не удалось */
+}
+
+uchar ispEnterProgrammingMode(void)
+{
+    uchar rc;
+
+    /* 1. Сохранённая скорость */
     if (last_success_speed != USBASP_ISP_SCK_AUTO) {
-        ispSetSCKOption(last_success_speed);
-        for (uchar tries = 3; tries > 0; tries--) {
-            // Сброс целевого устройства
-            ISP_OUT |= (1 << ISP_RST); 
-            clockWait(11);
-            ISP_OUT &= ~(1 << ISP_RST); 
-            clockWait(110);
-
-            // Команда программирования enable
-            ispTransmit(0xAC); 
-            ispTransmit(0x53);
-            check = ispTransmit(0); 
-            check2 = ispTransmit(0);
-
-            if (check == 0x53 && check2 == 0x00) {
-                prog_sck = last_success_speed;
-                return 0; // Успех
-            }
-            clockWait(11);
+        rc = tryEnterProgMode(last_success_speed);
+        if (rc == 0) {
+            prog_sck = last_success_speed;
+            return 0;
         }
-        last_success_speed = USBASP_ISP_SCK_AUTO; // Сброс при неудаче
+        last_success_speed = USBASP_ISP_SCK_AUTO; /* сброс в RAM */
     }
 
-    // Автоподбор: от быстрой к медленной
-    for (speed_idx = 0; speed_idx < ISP_SPEED_CNT; speed_idx++) {
-        uchar current_speed = GET_SPEED(speed_idx);
-        ispSetSCKOption(current_speed);
+    /* 2. Ручная скорость (-B) */
+    if (prog_sck != USBASP_ISP_SCK_AUTO) {
+        return tryEnterProgMode(prog_sck);
+    }
 
-        for (uchar tries = 3; tries > 0; tries--) {
-            // Сброс целевого устройства
-            ISP_OUT |= (1 << ISP_RST); 
-            clockWait(11);
-            ISP_OUT &= ~(1 << ISP_RST); 
-            clockWait(110);
-
-            // Команда программирования enable
-            ispTransmit(0xAC); 
-            ispTransmit(0x53);
-            check = ispTransmit(0); 
-            check2 = ispTransmit(0);
-
-            if (check == 0x53 && check2 == 0x00) {
-                prog_sck = current_speed;
-                last_success_speed = current_speed; // Запоминаем успешную скорость
-                // СОХРАНЯЕМ УСПЕШНУЮ СКОРОСТЬ В EEPROM
-                ispSaveSpeedToEEPROM(current_speed);
-		return 0; // Успех
-            }
-            clockWait(11);
+    /* 3. Автоподбор */
+    for (uchar i = 0; i < ISP_SPEED_CNT; i++) {
+        uchar speed = GET_SPEED(i);
+        rc = tryEnterProgMode(speed);
+        if (rc == 0) {
+            prog_sck           = speed;
+            last_success_speed = speed;
+            ispSaveSpeedToEEPROM(speed);
+            return 0;
         }
     }
 
-    // Не удалось войти в режим программирования
+    /* ничего не подошло */
     prog_sck = USBASP_ISP_SCK_AUTO;
-    ispSetSCKOption(USBASP_ISP_SCK_375); // Безопасная скорость по умолчанию
-    return 1; // Ошибка
+    ispSetSCKOption(USBASP_ISP_SCK_375);
+    return 1;
 }
 
 static void ispUpdateExtended(uint32_t address)

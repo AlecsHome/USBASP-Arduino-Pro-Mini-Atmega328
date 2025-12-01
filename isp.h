@@ -88,6 +88,7 @@ void ispLoadLastSpeed(void);
 
 void ispResetStoredSpeed(void);
 
+uchar ispFlushEEPROMPage(uint16_t addr);
 #endif /* __isp_h_included__ */
 
 #define EEPROM_SPEED_ADDR  0x10U   // одно место определения
