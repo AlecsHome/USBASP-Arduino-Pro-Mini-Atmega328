@@ -110,6 +110,7 @@
 #define USBASP_ISP_SCK_750    	11  /* 750 kHz   */
 #define USBASP_ISP_SCK_1500   	12  /* 1.5 MHz   */
 #define USBASP_ISP_SCK_3000   	13  /* 3 MHz   */
+//#define USBASP_ISP_SCK_6000   	14  /* 3 MHz   */
 
 /* macros for gpio functions */
 #define ledRedOff()    PORTC |=  (1 << PC0)   // анод через резистор к +5 ¬
@@ -121,5 +122,7 @@
 #define SLOW_SCK_PORT PORTC
 #define SLOW_SCK_PIN  PINC
 #define SLOW_SCK_NUM  PC2
+
+#define USB_CFG_BUFFER_SIZE     64    /* Размер буфера USB */
 
 #endif /* USBASP_H_ */

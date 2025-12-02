@@ -25,7 +25,6 @@
 #include "tpi_defs.h"
 #include "I2c.h"
 #include "microwire.h"
-#include <avr/eeprom.h>
 
 /* Макрос для быстрой проверки минимального значения */
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -474,31 +473,54 @@ uchar usbFunctionRead(uchar *data, uchar len)
         goto exit_success;
     }
 
-    /* ISP (Flash/EEPROM) – читаем сразу в пакет */
-    if (prog_state == PROG_STATE_READFLASH || prog_state == PROG_STATE_READEEPROM) {
-        if (prog_state == PROG_STATE_READFLASH) {
-            /* Чтение Flash памяти (поддерживает >64K) */
-            for (uint8_t i = 0; i < len; i++) {
-                data[i] = ispReadFlash(prog_address);
-                prog_address++;
+
+/* ISP (Flash/EEPROM) – оптимизированное чтение с буферизацией */
+if (prog_state == PROG_STATE_READFLASH || prog_state == PROG_STATE_READEEPROM) {
+    
+    // Оптимизация: максимизируем размер пакета
+    len = MIN(len, prog_nbytes);
+    
+    if (prog_state == PROG_STATE_READFLASH) {
+        /* Чтение Flash с оптимизацией extended адреса */
+        uint8_t current_hiaddr = 0xFF;
+        uint8_t needs_ext_update = 0;
+        
+        for (uint8_t i = 0; i < len; i++) {
+            // Проверяем extended адрес (каждые 128K)
+            uint8_t new_hiaddr = (uint8_t)(prog_address >> 17);
+            if (new_hiaddr != current_hiaddr) {
+                current_hiaddr = new_hiaddr;
+                needs_ext_update = 1;
             }
-        } else {
-            /* Чтение EEPROM (ограничено 64K) с проверкой границ */
-            for (uint8_t i = 0; i < len; i++) {
-                if (prog_address <= 0xFFFF) {
-                    data[i] = ispReadEEPROM((uint16_t)prog_address);
-                } else {
-                    // Ошибка: выход за пределы адресного пространства EEPROM
-                    data[i] = 0xFF; // или другое значение ошибки
-                }
-                prog_address++;
+            
+            // Если нужно обновить extended адрес или это первый байт
+            if (needs_ext_update ) {
+                ispUpdateExtended(prog_address);
+                needs_ext_update = 0;
             }
+            
+            data[i] = ispReadFlash(prog_address);
+            prog_address++;
         }
-        prog_nbytes -= len;
-        if (prog_nbytes == 0) {
-            prog_state = PROG_STATE_IDLE;
+    } else {
+        /* Чтение EEPROM (ограничено 4K) */
+        for (uint8_t i = 0; i < len; i++) {
+            if (prog_address <= 0xFFF) {  // 0x0FFF = 4095 (4K для ATmega2560)
+                data[i] = ispReadEEPROM((uint16_t)prog_address);
+            } else {
+                data[i] = 0xFF; // Ошибка адреса
+            }
+            prog_address++;
         }
-        goto exit_success;
+    }
+    
+    prog_nbytes -= len;
+    if (prog_nbytes == 0) {
+        prog_state = PROG_STATE_IDLE;
+    }
+    
+    // Оптимизация: возвращаем реальное количество прочитанных байт
+    goto exit_success;
     }
 
     /* Неизвестное состояние */
