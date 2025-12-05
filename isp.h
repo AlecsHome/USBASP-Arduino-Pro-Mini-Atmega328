@@ -59,7 +59,7 @@ uchar ispEnterProgrammingMode();
 uchar ispReadEEPROM(unsigned int address);
 
 /* write byte to flash at given address */
-uchar ispWriteFlash(uint32_t address, uchar data, uchar pollmode);
+uchar ispWriteFlash(uint32_t address, uchar data, uchar pollmode); 
 
 uchar ispFlushPage(uint32_t address);
 
@@ -73,19 +73,22 @@ uchar ispWriteEEPROM(unsigned int address, uchar data);
 uchar (*ispTransmit)(uchar);
 
 /* set SCK speed. call before ispConnect! */
-//void ispSetSCKOption(uchar sckoption);
-void ispSetSCKOption(uchar option);
+void ispSetSCKOption(uchar option) ;        
 
 /* load extended address byte */
 void ispLoadExtendedAddressByte(uint32_t address);
 
 /* */
 void spibusy(void);
-void ispUpdateExtended(uint32_t address);
+
+uchar ispReadFlashRaw(uint32_t address);
+
+void ispUpdateExtended(uint32_t address) ;
+
 extern uint8_t last_success_speed; // объ€вление, а не определение
+
 extern uchar isp_hiaddr;
 
 #endif /* __isp_h_included__ */
-
 
 #endif

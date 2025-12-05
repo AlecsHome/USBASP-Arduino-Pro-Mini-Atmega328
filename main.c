@@ -103,15 +103,19 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 
     	  ledRedOn();
     	  ispConnect();
-
-    	   rc = ispEnterProgrammingMode();
-    	   if (rc != 0) {
-           ispDisconnect();        // <-- критично
-           last_success_speed = USBASP_ISP_SCK_AUTO;   // <-- сброс  
-	    }
-
-           replyBuffer[0] = rc;
-	   len = 1;
+ 	  // Пытаемся войти в режим программирования
+	    rc = ispEnterProgrammingMode();
+	    if (rc != 0) {
+	 // Ошибка - сбрасываем сохраненную скорость
+	    last_success_speed = USBASP_ISP_SCK_AUTO;
+            ispDisconnect();
+            replyBuffer[0] = rc;
+    	    len = 1;
+           return len;
+   	 }
+    
+    	    replyBuffer[0] = 0; // Успех
+	    len = 1;								
 								
 //spi --------------------------------------------------------------
 	} else if (data[1] == USBASP_FUNC_SPI_CONNECT) {
@@ -474,66 +478,51 @@ uchar usbFunctionRead(uchar *data, uchar len)
     }
 
 
-/* ISP (Flash/EEPROM) – оптимизированное чтение с буферизацией */
-if (prog_state == PROG_STATE_READFLASH || prog_state == PROG_STATE_READEEPROM) {
+	/* ---------- Супер-оптимизированное чтение Flash ---------- */
+	if (prog_state == PROG_STATE_READFLASH) {
     
-    // Оптимизация: максимизируем размер пакета
-    len = MIN(len, prog_nbytes);
+	    // Если весь блок в пределах <128K, не вызываем ispUpdateExtended()
+	    if ((prog_address + len - 1) < 0x20000) {
+	        // БЫСТРЫЙ ПУТЬ: без вызовов ispUpdateExtended()
+	        for (uint8_t i = 0; i < len; i++) {
+	            data[i] = ispReadFlashRaw(prog_address);
+	            prog_address++;
+	        }
+	    } else {
+	        // МЕДЛЕННЫЙ ПУТЬ: используем ispUpdateExtended() для каждого байта
+	        // (она сама проверит, нужно ли обновлять extended адрес)
+	        for (uint8_t i = 0; i < len; i++) {
+	            data[i] = ispReadFlash(prog_address);  // Вызывает ispUpdateExtended() внутри
+	            prog_address++;
+	        }
+	    }
     
-    if (prog_state == PROG_STATE_READFLASH) {
-        /* Чтение Flash с оптимизацией extended адреса */
-        uint8_t current_hiaddr = 0xFF;
-        uint8_t needs_ext_update = 0;
-        
-        for (uint8_t i = 0; i < len; i++) {
-            // Проверяем extended адрес (каждые 128K)
-            uint8_t new_hiaddr = (uint8_t)(prog_address >> 17);
-            if (new_hiaddr != current_hiaddr) {
-                current_hiaddr = new_hiaddr;
-                needs_ext_update = 1;
-            }
-            
-            // Если нужно обновить extended адрес или это первый байт
-            if (needs_ext_update ) {
-                ispUpdateExtended(prog_address);
-                needs_ext_update = 0;
-            }
-            
-            data[i] = ispReadFlash(prog_address);
-            prog_address++;
-        }
-    } else {
-        /* Чтение EEPROM (ограничено 4K) */
-        for (uint8_t i = 0; i < len; i++) {
-            if (prog_address <= 0xFFF) {  // 0x0FFF = 4095 (4K для ATmega2560)
-                data[i] = ispReadEEPROM((uint16_t)prog_address);
-            } else {
-                data[i] = 0xFF; // Ошибка адреса
-            }
-            prog_address++;
-        }
-    }
-    
-    prog_nbytes -= len;
-    if (prog_nbytes == 0) {
-        prog_state = PROG_STATE_IDLE;
-    }
-    
-    // Оптимизация: возвращаем реальное количество прочитанных байт
-    goto exit_success;
-    }
+	    prog_nbytes -= len;
+	    if (prog_nbytes == 0) prog_state = PROG_STATE_IDLE;
+	    goto exit_success;
+	    }
 
-    /* Неизвестное состояние */
-    goto exit_unsupported;
+	/* ---------- Чтение EEPROM ---------- */
+	if (prog_state == PROG_STATE_READEEPROM) {
+	    for (uint8_t i = 0; i < len; i++) {
+	        data[i] = (prog_address <= 0xFFF) ? ispReadEEPROM((uint16_t)prog_address) : 0xFF;
+	        prog_address++;
+	    }
+	    prog_nbytes -= len;
+	    if (prog_nbytes == 0) {
+	        prog_state = PROG_STATE_IDLE;
+	    }
+    	goto exit_success;
+	}
 
-   exit_success:
+  exit_unsupported:
+    ledGreenOff();
+    return 0xFF;
+
+  exit_success:
     ledGreenOff();
     ledRedOn();
     return len;
-
-   exit_unsupported:
-    ledGreenOff();
-    return 0xFF;
 }
 
 static uint8_t eepromPageSize(uint32_t addr) 

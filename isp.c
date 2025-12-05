@@ -307,14 +307,18 @@ void ispUpdateExtended(uint32_t address)
     ispTransmit(0x00);
 }
 
-uchar ispReadFlash(uint32_t address) {
-
-    ispUpdateExtended(address);
- 
+uchar ispReadFlashRaw(uint32_t address)
+{
     ispTransmit(0x20 | ((address & 1) << 3));
     ispTransmit(address >> 9);
     ispTransmit(address >> 1);
-    return ispTransmit(0);   // собственно чтение
+    return ispTransmit(0);
+}
+
+uchar ispReadFlash(uint32_t address)
+{
+    ispUpdateExtended(address);
+    return ispReadFlashRaw(address);
 }
 
 uchar ispWriteFlash(uint32_t address, uint8_t data, uint8_t pollmode)
