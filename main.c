@@ -1,21 +1,7 @@
-﻿/*
- * USBasp - USB in-circuit programmer for Atmel AVR controllers
- *
- * Thomas Fischl <tfischl@gmx.de>
- *
- * License........: GNU GPL v2 (see Readme.txt)
- * Target.........: ATMega8 at 12 MHz
- * Creation Date..: 2005-02-20
- * Last change....: 2009-02-28
- *
- * PC2 SCK speed option.
- * GND  -> slow (8khz SCK),
- * open -> software set speed (default is 375kHz SCK)
- */
-
-#include <avr/io.h>
+﻿#include <avr/io.h>
 #include <avr/interrupt.h>
 #include <avr/pgmspace.h>
+
 #include "usbasp.h"
 #include "usbdrv.h"
 #include "isp.h"
@@ -27,13 +13,7 @@
 #include "microwire.h"
 
 /* Макрос для быстрой проверки минимального значения */
-//#define MIN(a, b) (((a) < (b)) ? (a) : (b))
-// Правильный макрос MIN для разных типов
-#define MIN(a, b) ({ \
-    __typeof__(a) _a = (a); \
-    __typeof__(b) _b = (b); \
-    _a < _b ? _a : _b; \
-})
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
 
 // --- Перемещаем ОПРЕДЕЛЕНИЯ переменных ВВЕРХ ---
 static uchar replyBuffer[8];
@@ -50,7 +30,9 @@ static uchar mw_bitnum = 0;
 static uint16_t mw_addr;     // Добавьте эту строку
 static uint8_t mw_opcode;    // И эту строку
 static unsigned int prog_pagesize;
+extern uchar sck_sw_delay;
 static uint8_t  rc;
+
 /* Глобальные переменные для I2C */
 static uint8_t i2c_eeprom_mode = 0;
 static uint8_t i2c_eeprom_device_addr = 0xA0;
@@ -72,12 +54,9 @@ static void setupSPIState(uint8_t mode, uint8_t *data) {
 }
 
 static void setupWriteOperation(uint8_t *data, uint8_t new_state,
-                                uint8_t pagesize, uint8_t flags)
-{
-    if (!prog_address_newmode) {
-        /* и для Flash и для EEPROM достаточно 16-битного адреса */
+                                uint8_t pagesize, uint8_t flags) {
+    if (!prog_address_newmode)
         prog_address = (data[3] << 8) | data[2];
-    }
 
     prog_pagesize = pagesize;
     prog_blockflags = flags;
@@ -96,12 +75,32 @@ static void setupMicrowireOperation(uint8_t *data, uint8_t new_state) {
     prog_state = new_state;
 }
 
-/* -------------------------------------------------------------------------------- */
+static void setupI2COperation(uint8_t *data, uint8_t new_state, usbMsgLen_t *len_out)
+{
+    i2c_eeprom_mode      = (data[3] > 0);  // 0 = обычный I2C, >0 = EEPROM
+    i2c_eeprom_addr_size = data[3];        // 0, 1 или 2 байта адреса
+    i2c_eeprom_device_addr = data[2];      // Базовый адрес устройства
 
+    if (i2c_eeprom_mode) {
+        uint32_t memory_address = 0;
+        if (data[3] == 2) {
+            memory_address = (data[5] << 8) | data[4];
+        } else if (data[3] == 1) {
+            memory_address = data[4];
+        }
+        prog_address = memory_address;
+    }
+
+    prog_nbytes = (data[7] << 8) | data[6];
+    prog_state  = new_state;
+    *len_out    = USB_NO_MSG;
+}
+
+/* -------------------------------------------------------------------------------- */
 usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 
-	usbMsgLen_t len = 0;
-	
+   usbMsgLen_t len = 0;
+
 	if (data[1] == USBASP_FUNC_CONNECT) {
 
     	  ispSetSCKOption(prog_sck);
@@ -109,19 +108,15 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 
     	  ledRedOn();
     	  ispConnect();
- 	  // Пытаемся войти в режим программирования
-	    rc = ispEnterProgrammingMode();
-	    if (rc != 0) {
-	 // Ошибка - сбрасываем сохраненную скорость
-	    last_success_speed = USBASP_ISP_SCK_AUTO;
-            ispDisconnect();
-            replyBuffer[0] = rc;
-    	    len = 1;
-           return len;
-   	 }
-    
-    	    replyBuffer[0] = 0; // Успех
-	    len = 1;								
+
+    	   rc = ispEnterProgrammingMode();
+    	   if (rc != 0) {
+           ispDisconnect();        // <-- критично
+           last_success_speed = USBASP_ISP_SCK_AUTO;   // <-- сброс  
+	    }
+
+           replyBuffer[0] = rc;
+	   len = 1;
 								
 //spi --------------------------------------------------------------
 	} else if (data[1] == USBASP_FUNC_SPI_CONNECT) {
@@ -158,81 +153,13 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
     		len = 1;
     
 	} else if (data[1] == USBASP_FUNC_I2C_READ) {
-    		/* Автоматическое чтение I2C/EEPROM */
-    		i2c_eeprom_mode = (data[3] > 0);
-    		i2c_eeprom_addr_size = data[3];
-    		i2c_eeprom_device_addr = data[2];
-    
-    		if (i2c_eeprom_mode) {
-        	uint32_t memory_address = 0;
-        	if (data[3] == 2) {
-            	memory_address = (data[5] << 8) | data[4];
-	        } else if (data[3] == 1) {
-            	memory_address = data[4];
-        	}
-        	prog_address = memory_address;
-        
-        	// Установка указателя в EEPROM с правильной адресацией
-        	i2c_start();
-        
-        	uint8_t dev = i2c_eeprom_device_addr;
-        	if (memory_address >= 0x10000) {
-            	dev |= ((memory_address >> 15) & 0x0E); // A16-A18 для 24C512+
-        	}
-        
-        	if (i2c_send_byte(dev) != I2C_ACK) {
-            	i2c_stop();
-            	replyBuffer[0] = 0xFE;
-            	len = 1;
-            	return len;
-        	}
-        
-        	// Отправка адреса памяти
-        	if (memory_address >= 0x10000) {
-            	i2c_send_byte((memory_address >> 8) & 0xFF);
-            	i2c_send_byte(memory_address & 0xFF);
-        	} else if (memory_address >= 0x100) {
-            	i2c_send_byte((memory_address >> 8) & 0xFF);
-            	i2c_send_byte(memory_address & 0xFF);
-        	} else {
-            	i2c_send_byte(memory_address & 0xFF);
-        	}
-        
-        	// Повторный START для чтения
-        	i2c_start();
-        	i2c_send_byte(dev | 0x01);
-    		} else {
-        	// Обычный I2C
-        	i2c_start();
-        	i2c_address(data[2], I2C_READ);
-    		}
-    
-    		prog_nbytes = (data[7] << 8) | data[6];
-    		prog_state = PROG_STATE_I2C_READ;
-    		len = USB_NO_MSG;
+    		i2c_stop_aw = 0;
+    		setupI2COperation(data, PROG_STATE_I2C_READ, &len);
 
 	} else if (data[1] == USBASP_FUNC_I2C_WRITE) {
-    		/* Автоматическая запись I2C/EEPROM */
-    		i2c_eeprom_mode = (data[3] > 0);  // Если есть адрес - режим EEPROM
-    		i2c_eeprom_addr_size = data[3];
-    		i2c_eeprom_device_addr = data[2];
     		i2c_stop_aw = data[4];
-    
-    		// Устанавливаем начальный адрес для EEPROM
-    		if (i2c_eeprom_mode) {
-        	uint32_t memory_address = 0;
-        	if (data[3] == 2) {
-            	memory_address = (data[5] << 8) | data[4];
-        	} else if (data[3] == 1) {
-           	 memory_address = data[4];
-        	}
-        	prog_address = memory_address;
-    		}
-    
-    		prog_nbytes = (data[7] << 8) | data[6];
-    		prog_state = PROG_STATE_I2C_WRITE;
-    		prog_address_sent = 0;  // Сброс флага
-    		len = USB_NO_MSG;					
+    		prog_address_sent = 0;
+    		setupI2COperation(data, PROG_STATE_I2C_WRITE, &len);
 			
 //microwire 93xx ---------------------------------------------------------		
 
@@ -245,38 +172,26 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
     		len = USB_NO_MSG;
 			
 	} else if (data[1] == USBASP_FUNC_MW_BUSY) {
-		if (mwBusy() == 1) 
-		{
-			replyBuffer[0] = 1; //Линия занята
-		}
-		else
-		{
-			replyBuffer[0] = 0; 
-		}
-		
-		len = 1;
+        	replyBuffer[0] = mwBusy() ? 1 : 0;
+        	len = 1;
 
 	} else if (data[1] == USBASP_FUNC_MW_GETADRLEN) {	
 		replyBuffer[0] = mwGetAdrLen();
 		len = 1;
 
-
 	 } else if (data[1] ==USBASP_FUNC_MW_TRANSMIT){
          	ledRedOn();
          	mwStart();
-         	prog_address = *((unsigned long*) &data[2]);
-         	mwSendData(prog_address,(data[6] & 0x1F));
-         	data[6] = data[6]>>5;
-         	if(data[6] > 0)
-          	 replyBuffer[0] = mwReadByte();
-         	if(data[6] > 1)
-          	 replyBuffer[1] = mwReadByte();
-         	if(data[6] > 2)
-          	 replyBuffer[2] = mwReadByte();
-         	if(data[6] > 3)
-           	 replyBuffer[3] = mwReadByte();
-         	mwEnd();
-        	len = 4;
+       		prog_address = *((unsigned long*) &data[2]);
+        	mwSendData(prog_address, (data[6] & 0x1F));
+        	data[6] >>= 5;
+        	uint8_t n = data[6];
+        	for (uint8_t i = 0; i < n && i < 4; i++) {
+           	replyBuffer[i] = mwReadByte();
+        	}
+        	mwEnd();
+        	len = (n > 4) ? 4 : n;
+        	// replyBuffer уже заполнен
 
 //------------------------------------------------------------------------
 	
@@ -301,9 +216,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
     		len = USB_NO_MSG;
 
 	} else if (data[1] == USBASP_FUNC_ENABLEPROG) {
-
-		replyBuffer[0] = ispEnterProgrammingMode();
-		
+        	replyBuffer[0] = ispEnterProgrammingMode();
 		len = 1;
 
 	} else if (data[1] == USBASP_FUNC_WRITEFLASH) {
@@ -317,23 +230,28 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
     		len = USB_NO_MSG;
 
 	} else if (data[1] == USBASP_FUNC_SETLONGADDRESS) {
-
 		/* set new mode of address delivering (ignore address delivered in commands) */
 		prog_address_newmode = 1;
 		/* set new address */
 		prog_address = *((unsigned long*) &data[2]);
 
 	} else if (data[1] == USBASP_FUNC_SETISPSCK) {
-    		// Обычная установка скорости (без специальных кодов сброса)
-    		prog_sck = data[2];
-    		replyBuffer[0] = 0;
-    		len = 1;
+		/* set sck option */
+		prog_sck = data[2];
+		replyBuffer[0] = 0;
+		len = 1;
 
-       	} else if (data[1] == USBASP_FUNC_GETISPSCK) {
-    		replyBuffer[0] = 0;
-    		replyBuffer[1] = prog_sck;
-    		len = 2;
+    	} else if (data[1] == USBASP_FUNC_GETISPSCK) {
+        	replyBuffer[0] = 0;
+        	replyBuffer[1] = prog_sck;
+        	replyBuffer[2] = last_success_speed;
+        	replyBuffer[3] = sck_sw_delay;
+        	replyBuffer[4] = isp_hiaddr;
+        	replyBuffer[5] = prog_state;
+        	len = 6;
 
+//------------------------------------------------------------------------
+       
 	} else if (data[1] == USBASP_FUNC_TPI_CONNECT) {
 		tpi_dly_cnt = data[2] | (data[3] << 8);
 
@@ -375,9 +293,9 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 	
 	} else if (data[1] == USBASP_FUNC_TPI_RAWWRITE) {
 		tpi_send_byte(data[2]);
-		replyBuffer[0] = 0;          // <-- обязательно!
+	        replyBuffer[0] = 0;          // <-- обязательно!
     		len = 1;
-	
+
 	} else if (data[1] == USBASP_FUNC_TPI_READBLOCK) {
     		setupTransfer(data, PROG_STATE_TPI_READ);
     		len = USB_NO_MSG;
@@ -392,9 +310,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 		replyBuffer[2] = 0;
 		replyBuffer[3] = USBASP_CAP_3_FLASH | USBASP_CAP_3_EEPROM | USBASP_CAP_3_FUSES | USBASP_CAP_3_LOCKBITS;
 		len = 4;
-	 
      	}
-
 	usbMsgPtr = replyBuffer;
 
 	return len;
@@ -444,30 +360,49 @@ uchar usbFunctionRead(uchar *data, uchar len)
         goto exit_success;
     }
 
-    /* ---------- I2C – без буфера ---------- */
-    /* В usbFunctionRead - расширенная обработка I2C */
+       	/* ---------- I2C ---------- */
 	if (prog_state == PROG_STATE_I2C_READ) {
-    	  if (i2c_eeprom_mode) {
-          // EEPROM режим - уже установлен указатель, просто читаем данные
-          for (uint8_t i = 0; i < len; i++) {
-            data[i] = i2c_read_byte((i == len - 1) ? I2C_NACK : I2C_ACK);
-            prog_address++;   // Обязательно для отслеживания позиции
-         }
-      } else {
-          // Обычный I2C режим - уже отправлен адрес чтения, читаем данные
-          for (uint8_t i = 0; i < len; i++) {
-            data[i] = i2c_read_byte((i == len - 1) ? I2C_NACK : I2C_ACK);
-           }
-    	}
-    
-     	 prog_nbytes -= len;
-    	if (prog_nbytes == 0) {
-        	i2c_stop();
-        	prog_state = PROG_STATE_IDLE;
-        	i2c_eeprom_mode = 0;
-         }
-       goto exit_success;
-     }
+	    /* ---------- Инициализация чтения (первый вызов) ---------- */
+	    if (!prog_address_sent) {
+	        uint8_t dev = i2c_eeprom_device_addr;
+	        uint8_t addr_bytes = i2c_eeprom_addr_size;
+
+	        if (i2c_eeprom_mode) dev |= (prog_address >> 15) & 0x0E; // Для EEPROM с адресами больше 64K
+
+	        i2c_start();
+	        if (i2c_send_byte(dev | I2C_WRITE) != I2C_ACK) goto nak;
+
+	        if (addr_bytes >= 1) i2c_send_byte(prog_address >> 8);
+	        if (addr_bytes >= 2) i2c_send_byte(prog_address & 0xFF);
+
+	        i2c_start();  // повторный START для чтения
+	        if (i2c_send_byte(dev | I2C_READ) != I2C_ACK) goto nak;
+
+	        prog_address_sent = 1;
+	    }
+
+	    /* ---------- Чтение данных ---------- */
+	    for (uint8_t i = 0; i < len; i++) {
+	        data[i] = i2c_read_byte((i == len - 1) ? I2C_NACK : I2C_ACK);
+	        prog_address++;
+	    }
+
+	    prog_nbytes -= len;
+	    if (prog_nbytes == 0) {
+	        i2c_stop();
+	        prog_state = PROG_STATE_IDLE;
+	        i2c_eeprom_mode = 0;
+	        prog_address_sent = 0;
+	    }
+	    return len;
+
+	nak:
+	    i2c_stop();
+	    prog_state = PROG_STATE_IDLE;
+	    i2c_eeprom_mode = 0;
+	    prog_address_sent = 0;
+	    return 0; // ошибка
+	}
 
     /* MW – без буфера */
     if (prog_state == PROG_STATE_MW_READ) {
@@ -503,10 +438,10 @@ uchar usbFunctionRead(uchar *data, uchar len)
             
 	            // Читаем до конца текущего блока или до len
 	            uint32_t block_end = ((prog_address >> 17) + 1) << 17;
-	            uint8_t remaining = len - bytes_read;
+	            uint8_t remaining = len - bytes_read;   // 0...255
             
 	            // ВАЖНО: block_end - prog_address может быть > 255, поэтому нужен uint32_t
-	            uint32_t to_boundary = block_end - prog_address;
+	            uint32_t to_boundary = block_end - prog_address;  // 0...131071
 	            uint8_t chunk = (to_boundary > remaining) ? remaining : (uint8_t)to_boundary;
             
 	            // Читаем chunk байт
@@ -517,12 +452,10 @@ uchar usbFunctionRead(uchar *data, uchar len)
 	            bytes_read += chunk;
 	        }
 	    }
-
 	    prog_nbytes -= len;
 	    if (prog_nbytes == 0) prog_state = PROG_STATE_IDLE;
 	  goto exit_success;
 	}
-
 	/* ---------- Чтение EEPROM ---------- */
 	if (prog_state == PROG_STATE_READEEPROM) {
 	    for (uint8_t i = 0; i < len; i++) {
@@ -546,258 +479,206 @@ uchar usbFunctionRead(uchar *data, uchar len)
     return len;
 }
 
-static uint8_t eepromPageSize(uint32_t addr) 
+uint8_t eepromPageSize(uint32_t addr)
 {
-  	return (addr >= 0x10000) ? 128 : 64;   // 24C512+ = 128, 24C256- = 64
+    if (addr >= 0x20000UL) return 128;   // 24C512
+    if (addr >= 0x10000UL) return 64;    // 24C256
+    if (addr >= 0x8000UL)  return 32;    // 24C128
+    if (addr >= 0x4000UL)  return 16;    // 24C64
+    return 8;                            // 24C32 и меньше
 }
 
+uint8_t mwSendDataBlock(uint8_t *buf, uint8_t len)
+{
+    	for (uint8_t i = 0; i < len; i++) {
+          if (mwSendData(buf[i], 8) != 0) return 1; // ошибка
+    	}
+    	return 0; // OK
+}
 
 uchar usbFunctionWrite(uchar *data, uchar len)
-{
-    uchar i;
+{ 
+    uchar i ;
     uchar retVal = 0;
 
-    /* Быстрая проверка: если не «пишем» – сразу выход */
-    if (prog_state == PROG_STATE_IDLE) {
-        retVal = 0xFF;
-        goto exit;
-    }
-
-    if ((prog_state != PROG_STATE_WRITEFLASH) &&
+	/* быстрая проверка режима */
+    if (prog_state == PROG_STATE_IDLE)  return 0xFF;
+    if ((prog_state != PROG_STATE_WRITEFLASH)  &&
         (prog_state != PROG_STATE_WRITEEEPROM) &&
-        (prog_state != PROG_STATE_TPI_WRITE) &&
-        (prog_state != PROG_STATE_SPI_WRITE) &&
-        (prog_state != PROG_STATE_MW_WRITE) &&
-        (prog_state != PROG_STATE_I2C_WRITE)) {
-        retVal = 0xFF;
-        goto exit;
-    }
+        (prog_state != PROG_STATE_TPI_WRITE)   &&
+        (prog_state != PROG_STATE_SPI_WRITE)   &&
+        (prog_state != PROG_STATE_MW_WRITE)    &&
+        (prog_state != PROG_STATE_I2C_WRITE)) return 0xFF;
 
+    len = MIN(len, prog_nbytes);
     ledGreenOn();
 
-    /* Оптимизация: определяем реальную длину */
-    len = MIN(len, prog_nbytes);
-
-    /* TPI – быстро отдельно */
-    if (prog_state == PROG_STATE_TPI_WRITE) {
-        tpi_write_block(prog_address, data, len);
-        prog_address += len;
-        prog_nbytes -= len;
-        if (prog_nbytes == 0) {
-            prog_state = PROG_STATE_IDLE;
-            retVal = 1;
-        }
-        goto exit;
-    }
-
-    /* SPI – без буфера */
-    if (prog_state == PROG_STATE_SPI_WRITE) {
-        for (i = 0; i < len; i++) {
-            ispTransmit(data[i]);
-        }
-        prog_nbytes -= len;
-        if (prog_nbytes == 0) {
-            if (spi_cs_hi) CS_HI();
-            prog_state = PROG_STATE_IDLE;
-            retVal = 1;
-        }
-        goto exit;
-    }
-
-        /* ---------- I2C – EEPROM page-write ( 64 байт за 5 мс) ---------- */
-	/* В usbFunctionWrite - универсальная I2C запись */
-	if (prog_state == PROG_STATE_I2C_WRITE) {
-    
-    	if (i2c_eeprom_mode) {
-        
-	/* ---------- EEPROM режим с постраничной записью ---------- */
-
-        uint8_t page_size = eepromPageSize(prog_address);
-	uint8_t chunk = page_size - (prog_address % page_size);
-	if (chunk > len) chunk = len;
-	if (chunk > prog_nbytes) chunk = prog_nbytes;
-
-        /* ----- заголовок (один раз) ----- */
-        if (!prog_address_sent) {
-            i2c_start();
-            
-            uint8_t dev = i2c_eeprom_device_addr;
-            // Для больших EEPROM добавляем старшие биты адреса в device address
-            if (prog_address >= 0x10000) {
-                // 24C512+: A16 в бит 1, A17 в бит 2 и т.д.
-                dev |= ((prog_address >> 15) & 0x0E);
-            }
-            
-            if (i2c_send_byte(dev | I2C_WRITE) != I2C_ACK) goto nak;
-            
-            // Отправляем адрес памяти
-            if (prog_address >= 0x10000) {
-                // 24C512+: 16-битный адрес (A0-A15)
-                if (i2c_send_byte((prog_address >> 8) & 0xFF) != I2C_ACK) goto nak;
-                if (i2c_send_byte(prog_address & 0xFF) != I2C_ACK) goto nak;
-            } else if (prog_address >= 0x100) {
-                // 24C256 и меньше: 16-битный адрес
-                if (i2c_send_byte((prog_address >> 8) & 0xFF) != I2C_ACK) goto nak;
-                if (i2c_send_byte(prog_address & 0xFF) != I2C_ACK) goto nak;
-            } else {
-                // Малые EEPROM: 8-битный адрес
-                if (i2c_send_byte(prog_address & 0xFF) != I2C_ACK) goto nak;
-            }
-            
-            prog_address_sent = 1;
-        }
-
-        /* ----- пишем данные ----- */
-        for (uint8_t i = 0; i < chunk; i++) {
-            if (i2c_send_byte(data[i]) != I2C_ACK) goto nak;
-            prog_address++;
-        }
-
-        prog_nbytes -= chunk;
-
-        /* ----- конец страницы или всей записи ----- */
-        if (prog_nbytes == 0 || (prog_address % page_size) == 0) {
-            i2c_stop();
-            _delay_ms(5);  // Задержка записи EEPROM
-       //     prog_address_sent = 0; // <-- уже сброшено в i2c_stop()
-       }
-
-        if (prog_nbytes == 0) {
-            prog_state = PROG_STATE_IDLE;
-            i2c_eeprom_mode = 0;
-            retVal = 1;
-        } else {
-            retVal = chunk; // сколько байт обработано
-        }
-        
-    	} else {
-        /* ---------- Обычный I2C режим ---------- */
-        for (i = 0; i < len; i++) {
-            if (i2c_send_byte(data[i]) != I2C_ACK) {
-                retVal = 0xFE;
-                goto exit;
-            }
-        }
-        prog_nbytes -= len;
-        
-        if (prog_nbytes == 0) {
-            if (i2c_stop_aw == 1) i2c_stop();
-            prog_state = PROG_STATE_IDLE;
-            retVal = 1;
-          }
+	/* ---------- TPI ---------- */
+	if (prog_state == PROG_STATE_TPI_WRITE) {
+	        tpi_write_block(prog_address, data, len);
+	        prog_address += len;
+	        prog_nbytes  -= len;
+	    if (prog_nbytes == 0) prog_state = PROG_STATE_IDLE;
+        	goto exit;
     	}
-     goto exit;
-
-  nak: // Ошибка EEPROM
-     i2c_stop();
-     prog_state = PROG_STATE_IDLE;
-     i2c_eeprom_mode = 0;
-     prog_address_sent = 0;
-     retVal = 0xFE;
-     goto exit;
-  }
-
-    	/* ---------- MW – без буфера ----------*/
-    	if (prog_state == PROG_STATE_MW_WRITE) {
-     	  for (i = 0; i < len; i++) {
-           if (mw_bitnum > 0) {
-            uint8_t bits = (mw_bitnum < 8) ? mw_bitnum : 8;
-            if (mwSendData(data[i], bits) != 0) {
-                retVal = 0xFD; // Ошибка Microwire
-                goto exit;
-              }
-              mw_bitnum -= bits;
+    	/* ---------- SPI ---------- */
+    	if (prog_state == PROG_STATE_SPI_WRITE) {
+          for (uint8_t i = 0; i < len; i++) ispTransmit(data[i]);
+        	prog_nbytes -= len;
+          if (prog_nbytes == 0) {
+             if (spi_cs_hi) CS_HI();
+            	prog_state = PROG_STATE_IDLE;
         	}
+        	goto exit;
     	}
-    		prog_nbytes -= len;
-    	if (prog_nbytes == 0) {
-        	if (mw_cs_lo) mwEnd();
-        	  prog_state = PROG_STATE_IDLE;
-        	retVal = 1;
-    	}
-    	goto exit;
+	/* ---------- I2C – EEPROM page-write (<= 64 байт за 5 мс) ---------- */
+	if (prog_state == PROG_STATE_I2C_WRITE) {
+	    if (i2c_eeprom_mode) {
+	        /* ---------- EEPROM режим с постраничной записью ---------- */
+	        uint8_t page_size = eepromPageSize(prog_address);
+	        uint8_t chunk = MIN(MIN(len, prog_nbytes), page_size - (prog_address % page_size));
+
+	        /* Отправляем заголовок (адрес устройства и адрес памяти) */
+	        if (!prog_address_sent) {
+	            i2c_start();
+
+	            uint8_t dev = i2c_eeprom_device_addr;
+	            if (prog_address >= 0x10000UL) {
+	                dev |= ((prog_address >> 15) & 0x0E);
+	            }
+
+	            if (i2c_send_byte(dev | I2C_WRITE) != I2C_ACK) goto nak;
+
+	            // Отправляем адрес памяти
+	            if (prog_address >= 0x10000UL) {
+	                if (i2c_send_byte((prog_address >> 8) & 0xFF) != I2C_ACK) goto nak;
+	            }
+	            if (i2c_send_byte(prog_address & 0xFF) != I2C_ACK) goto nak;
+	
+	            prog_address_sent = 1;
+	        }
+
+	        /* Пишем данные */
+	        for (uint8_t i = 0; i < chunk; i++) {
+	            if (i2c_send_byte(data[i]) != I2C_ACK) goto nak;
+	            prog_address++;
+	        }
+	        prog_nbytes -= chunk;
+
+	        /* Конец страницы или всей записи */
+	        if (prog_nbytes == 0 || (prog_address % page_size) == 0) {
+	            i2c_stop();
+	            _delay_ms(5);  // Задержка записи EEPROM
+	        }
+
+	        if (prog_nbytes == 0) {
+	            prog_state = PROG_STATE_IDLE;
+	            i2c_eeprom_mode = 0;
+	            replyBuffer[0] = 1; // Успех
+	            len = 1;
+	        } else {
+	            replyBuffer[0] = chunk; // Сколько байт обработано
+	            len = 1;
+	        }
+	    } else {
+	        /* ---------- Обычный I2C режим ---------- */
+	        for (uint8_t i = 0; i < len; i++) {
+	            if (i2c_send_byte(data[i]) != I2C_ACK) {
+	                replyBuffer[0] = 0xFE;
+	                len = 1;
+	                goto exit;
+	            }
+	        }
+	        prog_nbytes -= len;
+
+	        if (prog_nbytes == 0) {
+	            if (i2c_stop_aw == 1) i2c_stop();
+	            prog_state = PROG_STATE_IDLE;
+	            replyBuffer[0] = 1;
+	            len = 1;
+	        }
+	    }
+	    usbMsgPtr = replyBuffer;
+	    return len;
+
+	nak: // Ошибка EEPROM
+	    i2c_stop();
+	    prog_state = PROG_STATE_IDLE;
+	    i2c_eeprom_mode = 0;
+	    prog_address_sent = 0;
+	    replyBuffer[0] = 0xFE;
+	    len = 1;
+	    usbMsgPtr = replyBuffer;
+	    return len;
 	}
+	/* ---------- MW ---------- */
+	    if (prog_state == PROG_STATE_MW_WRITE) {
+        	if (mwSendDataBlock(data, len) != 0) return 0xFD;
+	        prog_nbytes -= len;
+        	if (prog_nbytes == 0) { if (mw_cs_lo) mwEnd(); prog_state = PROG_STATE_IDLE; }
+	        goto exit;
+    	}
 
-	/* ---------- Flash – с extended addressing ---------- */ 	
-	if (prog_state == PROG_STATE_WRITEFLASH) {
+	/* ---------- Flash / EEPROM (оптимизировано) ---------- */
+	if (prog_state == PROG_STATE_WRITEFLASH || prog_state == PROG_STATE_WRITEEEPROM) {
     
-    	// Более эффективная обработка страниц
-    	for (i = 0; i < len; i++) {
-          if (prog_pagesize == 0) {
-            /* not paged - immediate programming */
-            if (ispWriteFlash(prog_address, data[i], 1) != 0) {
-                retVal = 0xFB; // Ошибка записи Flash
-                goto exit;
-            }
-           } else {
-            /* paged - write to buffer */
-            if (ispWriteFlash(prog_address, data[i], 0) != 0) {
-                retVal = 0xFB;
-                goto exit;
-            }
-            
-            // Если заполнили страницу - сбрасываем ее
-            if (--prog_pagecounter == 0) {
-                // Используем базовый адрес страницы для flush
-                uint32_t page_base = prog_address & ~(prog_pagesize - 1);
-                if (ispFlushPage(page_base) != 0) {
-                    retVal = 0xFA; // Ошибка сброса страницы
-                    goto exit;
-                }
-                prog_pagecounter = prog_pagesize;
-               }
-             }
-            prog_address++;
-    	  }
+	    uint8_t is_flash = (prog_state == PROG_STATE_WRITEFLASH);
+	    uint8_t error_code = is_flash ? 0xFB : 0xFC;
     
-     	  prog_nbytes -= len;
+	    for (i = 0; i < len; i++) {
+	        // Запись
+	        uint8_t write_result;
+	        if (is_flash) {
+	            write_result = ispWriteFlash(prog_address, data[i], 
+                                        (prog_pagesize == 0) ? 1 : 0);
+        	} else {
+	            write_result = ispWriteEEPROM((unsigned int)prog_address, data[i]);
+        	}
+        
+	        if (write_result != 0) {
+	            retVal = error_code;
+	            goto exit;
+        	}
+        
+	        // Обработка страниц (только для Flash)
+	        if (is_flash && prog_pagesize != 0) {
+	            if (--prog_pagecounter == 0) {
+	                uint32_t page_base = prog_address & ~(prog_pagesize - 1);
+	                ispUpdateExtended(page_base);
+	                if (ispFlushPage(page_base) != 0) {
+	                    retVal = 0xFA;
+	                    goto exit;
+	                }
+	                prog_pagecounter = prog_pagesize;
+	              }
+	          }
+        
+        	prog_address++;
+	    }
     
-    	if (prog_nbytes == 0) {
-         // Если осталась неполная страница - сбросить ее
-         if ((prog_pagesize != 0) && (prog_pagecounter != prog_pagesize)) {
-            uint32_t page_base = (prog_address - 1) & ~(prog_pagesize - 1);
-            if (ispFlushPage(page_base) != 0) {
-                retVal = 0xFA;
-                goto exit;
-            }
-          }
-        prog_state = PROG_STATE_IDLE;
-        retVal = 1;
-       }
-        goto exit;
-       }
-
-        /* ---------- EEPROM – без extended addressing ---------- */
-	if (prog_state == PROG_STATE_WRITEEEPROM) {
+	    prog_nbytes -= len;
     
-    	// Проверка на выход за пределы 16-битного адресного пространства
-    	if (prog_address >= 0x10000UL) {
-          retVal = 0xFC; // Ошибка: адрес EEPROM вне диапазона
-          goto exit;
-        }
-    
-    	for (i = 0; i < len; i++) {
-          if (ispWriteEEPROM((unsigned int)prog_address, data[i]) != 0) {
-            retVal = 0xFC; // Ошибка записи EEPROM
-            goto exit;
-        }
-         prog_address++;
-       }
-    
-      prog_nbytes -= len;
-    
-      if (prog_nbytes == 0) {
-        prog_state = PROG_STATE_IDLE;
-        retVal = 1;
-       }
-      goto exit;
-    } 
+	    if (prog_nbytes == 0) {
+        	// Завершение неполной страницы (только для Flash)
+	        if (is_flash && prog_pagesize != 0 && prog_pagecounter != prog_pagesize) {
+        	    uint32_t page_base = (prog_address - 1) & ~(prog_pagesize - 1);
+	            ispUpdateExtended(page_base);
+	            if (ispFlushPage(page_base) != 0) {
+	                retVal = 0xFA;
+	                goto exit;
+        	    }
+	        }
+	        prog_state = PROG_STATE_IDLE;
+	      retVal = 1;
+	    }
+	    goto exit;
+	}
     /* Неизвестное состояние */
     retVal = 0xFF;
  
   exit:
     ledGreenOff();
-    ledRedOn();
+    ledRedOff();
     return retVal;
 }
 

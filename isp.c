@@ -63,7 +63,7 @@ static inline void spiHWdisable() {
 
 void ispSetSCKOption(uchar option) {
     if (option == USBASP_ISP_SCK_AUTO)
-        option = USBASP_ISP_SCK_750;
+        option = USBASP_ISP_SCK_1500;
 
     if (option >= USBASP_ISP_SCK_93_75) {
         ispTransmit = (uchar (*)(uchar))ispTransmit_hw;
@@ -386,4 +386,3 @@ uchar ispWriteEEPROM(unsigned int address, uchar data) {
     return 0;
 
 }
-

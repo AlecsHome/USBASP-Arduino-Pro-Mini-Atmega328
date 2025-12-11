@@ -22,34 +22,36 @@
 #define USBASP_FUNC_WRITEEEPROM 	8
 #define USBASP_FUNC_SETLONGADDRESS 	9
 #define USBASP_FUNC_SETISPSCK 		10
+
 #define USBASP_FUNC_TPI_CONNECT      	11
 #define USBASP_FUNC_TPI_DISCONNECT   	12
 #define USBASP_FUNC_TPI_RAWREAD      	13
 #define USBASP_FUNC_TPI_RAWWRITE     	14
 #define USBASP_FUNC_TPI_READBLOCK    	15
 #define USBASP_FUNC_TPI_WRITEBLOCK   	16
-#define USBASP_FUNC_GETISPSCK         	20
 
-#define USBASP_FUNC_SPI_CONNECT		50
-#define USBASP_FUNC_SPI_READ  		51
-#define USBASP_FUNC_SPI_WRITE		52
+#define USBASP_FUNC_GETISPSCK        	17
+//#define USBASP_FUNC_READ_SIGNATURE      18
+#define USBASP_FUNC_GETCAPABILITIES     127
 
-#define USBASP_FUNC_I2C_INIT		70
-#define USBASP_FUNC_I2C_START 		71
-#define USBASP_FUNC_I2C_STOP 		72
-#define USBASP_FUNC_I2C_ACK 		73
-#define USBASP_FUNC_I2C_WRITEBYTE	74
-#define USBASP_FUNC_I2C_READBYTE	75
-#define USBASP_FUNC_I2C_READ 		76
-#define USBASP_FUNC_I2C_WRITE		77
+#define USBASP_FUNC_SPI_CONNECT		20
+#define USBASP_FUNC_SPI_READ  		21
+#define USBASP_FUNC_SPI_WRITE		22
 
-#define USBASP_FUNC_MW_TRANSMIT 	90
-#define USBASP_FUNC_MW_READ		92
-#define USBASP_FUNC_MW_WRITE		93
-#define USBASP_FUNC_MW_BUSY		94
-#define USBASP_FUNC_MW_GETADRLEN 	95
+#define USBASP_FUNC_I2C_INIT		30
+#define USBASP_FUNC_I2C_START 		31
+#define USBASP_FUNC_I2C_STOP 		32
+#define USBASP_FUNC_I2C_ACK 		33
+#define USBASP_FUNC_I2C_WRITEBYTE	34
+#define USBASP_FUNC_I2C_READBYTE	35
+#define USBASP_FUNC_I2C_READ 		36
+#define USBASP_FUNC_I2C_WRITE		37
 
-#define USBASP_FUNC_GETCAPABILITIES 	127
+#define USBASP_FUNC_MW_TRANSMIT 	40
+#define USBASP_FUNC_MW_READ		42
+#define USBASP_FUNC_MW_WRITE		43
+#define USBASP_FUNC_MW_BUSY		44
+#define USBASP_FUNC_MW_GETADRLEN 	45
 
 /* USBASP capabilities */
 // Байт 0: Основные возможности
@@ -58,8 +60,6 @@
 //#define USBASP_CAP_0_SPI25      0x04  // Поддержка SPI для 25xx памяти
 #define USBASP_CAP_0_I2C        0x08  // Поддержка I2C для 24xx памяти
 #define USBASP_CAP_0_MW         0x10  // Поддержка Microwire для 93xx памяти
-//#define USBASP_CAP_0_SWD        0x20  // Поддержка SWD для ARM
-//#define USBASP_CAP_0_JTAG       0x40  // Поддержка JTAG
 
 // Байт 1: Дополнительные возможности
 #define USBASP_CAP_1_SCK_AUTO   0x01  // Автоматическое определение SCK
@@ -72,6 +72,7 @@
 #define USBASP_CAP_3_EEPROM     0x02  // Поддержка EEPROM памяти
 #define USBASP_CAP_3_FUSES      0x04  // Поддержка чтения/записи fuse-битов
 #define USBASP_CAP_3_LOCKBITS   0x08  // Поддержка чтения/записи lock-битов
+#define USBASP_CAP_3_EXTENDED_ADDR 0x80
 
 /* programming state */
 #define PROG_STATE_IDLE         0
@@ -110,10 +111,10 @@
 #define USBASP_ISP_SCK_750    	11  /* 750 kHz   */
 #define USBASP_ISP_SCK_1500   	12  /* 1.5 MHz   */
 #define USBASP_ISP_SCK_3000   	13  /* 3 MHz   */
-//#define USBASP_ISP_SCK_6000   	14  /* 3 MHz   */
+//#define USBASP_ISP_SCK_6000   	14  /* 6 MHz   */
 
 /* macros for gpio functions */
-#define ledRedOff()    PORTC |=  (1 << PC0)   // анод через резистор к +5 ¬
+#define ledRedOff()    PORTC |=  (1 << PC0)   // анод через резистор к +5V
 #define ledRedOn()     PORTC &= ~(1 << PC0)   // катод к GND > светодиод горит
 
 #define ledGreenOff()  PORTC |=  (1 << PC1)
@@ -123,6 +124,6 @@
 #define SLOW_SCK_PIN  PINC
 #define SLOW_SCK_NUM  PC2
 
-#define USB_CFG_BUFFER_SIZE     64    /* Размер буфера USB */
+#define USB_CFG_BUFFER_SIZE     	64    /* Размер буфера USB */
 
 #endif /* USBASP_H_ */
