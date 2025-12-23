@@ -39,6 +39,7 @@ static uint8_t i2c_eeprom_device_addr = 0xA0;
 static uint8_t i2c_eeprom_addr_size = 0;
 static uint8_t i2c_stop_aw = 1;
 static uint8_t prog_address_sent = 0;  // Флаг отправки адреса
+static uint8_t i2c_dev_addr = 0xFF;   // последний заданный адрес
 
 static void setupTransfer(uint8_t *data, uint8_t new_state) {
     prog_address = (data[3] << 8) | data[2];
@@ -134,22 +135,24 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 
 //i2c 24xx ---------------------------------------------------------
 
+
 	} else if (data[1] == USBASP_FUNC_I2C_INIT) {
     		ledRedOn();
     		i2c_init();
     
-	} else if (data[1] == USBASP_FUNC_I2C_START) {
-    		i2c_start();
-    
-	} else if (data[1] == USBASP_FUNC_I2C_STOP) {
+	/* ---------- WRITE_BYTE ---------- */
+	} else if (data[1] == USBASP_FUNC_I2C_WRITE_BYTE) {
+    		i2c_start(i2c_dev_addr & ~1);   // START + WRITE-бит
+    		i2c_send_byte(data[2]);        // сам байт
     		i2c_stop();
-    
-	} else if (data[1] == USBASP_FUNC_I2C_WRITEBYTE) {
-    		replyBuffer[0] = i2c_send_byte(data[2]);
+    		replyBuffer[0] = 0;             // статус «ОК»
     		len = 1;
-    
-	} else if (data[1] == USBASP_FUNC_I2C_READBYTE) {
-    		replyBuffer[0] = i2c_read_byte(data[2]);
+
+	/* ---------- READ_BYTE ---------- */
+	} else if (data[1] == USBASP_FUNC_I2C_READ_BYTE) {
+    		i2c_start(i2c_dev_addr | 1);    // START + READ-бит
+    		replyBuffer[0] = i2c_read_byte(0); // 0 = NACK (последний байт)
+    		i2c_stop();
     		len = 1;
     
 	} else if (data[1] == USBASP_FUNC_I2C_READ) {
@@ -160,7 +163,12 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
     		i2c_stop_aw = data[4];
     		prog_address_sent = 0;
     		setupI2COperation(data, PROG_STATE_I2C_WRITE, &len);
-			
+
+    	} else if (data[1] == USBASP_FUNC_I2C_SETDEVICE) {   // 37
+     	 	i2c_dev_addr = data[2];   // data[2] = addr << 1
+    		replyBuffer[0]  = 0;
+    		len = 1;
+
 //microwire 93xx ---------------------------------------------------------		
 
 	} else if (data[1] == USBASP_FUNC_MW_WRITE) {
@@ -229,11 +237,17 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
     		setupWriteOperation(data, PROG_STATE_WRITEEEPROM, 0, 0);
     		len = USB_NO_MSG;
 
-	} else if (data[1] == USBASP_FUNC_SETLONGADDRESS) {
-		/* set new mode of address delivering (ignore address delivered in commands) */
-		prog_address_newmode = 1;
-		/* set new address */
-		prog_address = *((unsigned long*) &data[2]);
+	} else if (data[1] == USBASP_FUNC_SETLONGADDRESS) {  // Функция 9
+		// data[4], data[5] - младшие 16 бит (wValue)
+	    	// data[2], data[3] - старшие 16 бит (wIndex)
+		 uint32_t addr = ((uint32_t)data[3] << 24) | ((uint32_t)data[2] << 16) |
+                   ((uint32_t)data[5] << 8) | data[4];
+    
+    		// Вызываем вашу функцию extended addressing
+    		ispUpdateExtended(addr);
+    
+	    	replyBuffer[0] = 0;  // Успех
+    		len = 1;
 
 	} else if (data[1] == USBASP_FUNC_SETISPSCK) {
 		/* set sck option */
@@ -249,7 +263,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
         	replyBuffer[4] = isp_hiaddr;
         	replyBuffer[5] = prog_state;
         	len = 6;
-
+    
 //------------------------------------------------------------------------
        
 	} else if (data[1] == USBASP_FUNC_TPI_CONNECT) {
@@ -308,7 +322,9 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 		replyBuffer[0] = USBASP_CAP_0_TPI | USBASP_CAP_0_I2C | USBASP_CAP_0_MW;
 		replyBuffer[1] = USBASP_CAP_1_SCK_AUTO | USBASP_CAP_1_HW_SCK;
 		replyBuffer[2] = 0;
-		replyBuffer[3] = USBASP_CAP_3_FLASH | USBASP_CAP_3_EEPROM | USBASP_CAP_3_FUSES | USBASP_CAP_3_LOCKBITS;
+		replyBuffer[3] = USBASP_CAP_3_FLASH | USBASP_CAP_3_EEPROM | 
+                 USBASP_CAP_3_FUSES | USBASP_CAP_3_LOCKBITS |
+                 USBASP_CAP_3_EXTENDED_ADDR | USBASP_CAP_3MHZ;
 		len = 4;
      	}
 	usbMsgPtr = replyBuffer;
@@ -554,10 +570,11 @@ uchar usbFunctionWrite(uchar *data, uchar len)
 	        uint8_t space_in_page = page_size - (prog_address % page_size);
 	        uint8_t max_write = MIN(len, MIN(prog_nbytes, space_in_page));
         
-	        for (i = 0; i < max_write; i++) {
-	            if (i2c_send_byte(data[i]) != I2C_ACK) goto i2c_error;
-	            prog_address++;
-	        }
+		for (i = 0; i < max_write; i++) {
+		    if (i2c_send_byte(data[i]) != I2C_ACK) goto i2c_error;
+			    prog_address++;
+		}
+
 	        prog_nbytes -= max_write;
         
 	        // Если страница заполнена или запись закончена
