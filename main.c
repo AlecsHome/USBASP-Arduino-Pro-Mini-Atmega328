@@ -133,6 +133,11 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
     		setupSPIState(PROG_STATE_SPI_WRITE, data);
     		len = USB_NO_MSG;
 
+	} else if (data[1] == USBASP_FUNC_SPI_CHIP_ERASE) {
+    		// НОВАЯ ФУНКЦИЯ: стирание только Flash
+    		setupSPIState(PROG_STATE_SPI_CHIP_ERASE, data);
+		len = USB_NO_MSG;    
+
 //i2c 24xx ---------------------------------------------------------
 
 
@@ -147,6 +152,12 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
     		i2c_stop();
     		replyBuffer[0] = 0;             // статус «ОК»
     		len = 1;
+
+       	} else if (data[1] == USBASP_FUNC_I2C_START) {
+		i2c_start();
+		
+	} else if (data[1] == USBASP_FUNC_I2C_STOP) {
+		i2c_stop();
 
 	/* ---------- READ_BYTE ---------- */
 	} else if (data[1] == USBASP_FUNC_I2C_READ_BYTE) {
@@ -168,6 +179,19 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
      	 	i2c_dev_addr = data[2];   // data[2] = addr << 1
     		replyBuffer[0]  = 0;
     		len = 1;
+		} else if (data[1] == USBASP_FUNC_I2C_SETDEVICE) {   // 37
+    		// data[2] должен содержать 7-битный адрес (0x00-0x7F)
+    		uint8_t addr_7bit = data[2];
+    
+    		// Проверка, что адрес корректен (7 бит)
+    		if (addr_7bit <= 0x7F) {
+        	i2c_dev_addr = addr_7bit;  // Сохраняем 7-битный адрес
+        	// При отправке на шину I2C будем делать: i2c_dev_addr << 1
+        	replyBuffer[0] = 0;  // Успех
+    		 } else {
+        	   replyBuffer[0] = 1;  // Ошибка: неверный адрес
+      		   }
+    		 len = 1;
 
 //microwire 93xx ---------------------------------------------------------		
 
@@ -319,14 +343,22 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 		len = USB_NO_MSG; /* multiple out */
 	
 	} else if (data[1] == USBASP_FUNC_GETCAPABILITIES) {
-		replyBuffer[0] = USBASP_CAP_0_TPI | USBASP_CAP_0_I2C | USBASP_CAP_0_MW;
-		replyBuffer[1] = USBASP_CAP_1_SCK_AUTO | USBASP_CAP_1_HW_SCK;
-		replyBuffer[2] = 0;
-		replyBuffer[3] = USBASP_CAP_3_FLASH | USBASP_CAP_3_EEPROM | 
-                 USBASP_CAP_3_FUSES | USBASP_CAP_3_LOCKBITS |
-                 USBASP_CAP_3_EXTENDED_ADDR | USBASP_CAP_3MHZ;
-		len = 4;
-     	}
+    		// Байт 0: Основные возможности
+    		replyBuffer[0] = USBASP_CAP_0_TPI | USBASP_CAP_0_I2C | USBASP_CAP_0_MW;
+    
+    		// Байт 1: Дополнительные возможности
+	    	replyBuffer[1] = USBASP_CAP_1_SCK_AUTO | USBASP_CAP_1_HW_SCK;
+    
+    		// Байт 2: Резерв (0)
+    		replyBuffer[2] = 0;
+    
+    		// Байт 3: Возможности работы с памятью
+    		replyBuffer[3] = USBASP_CAP_3_FLASH | USBASP_CAP_3_EEPROM | 
+                     		 USBASP_CAP_3_FUSES | USBASP_CAP_3_LOCKBITS |
+                     		 USBASP_CAP_3_EXTENDED_ADDR | USBASP_CAP_3MHZ;
+    
+    		len = 4;
+	}
 	usbMsgPtr = replyBuffer;
 
 	return len;
