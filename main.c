@@ -140,7 +140,6 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 
 //i2c 24xx ---------------------------------------------------------
 
-
 	} else if (data[1] == USBASP_FUNC_I2C_INIT) {
     		ledRedOn();
     		i2c_init();
@@ -341,27 +340,21 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 	} else if (data[1] == USBASP_FUNC_TPI_WRITEBLOCK) {
 		setupTransfer(data, PROG_STATE_TPI_WRITE);
 		len = USB_NO_MSG; /* multiple out */
-	
+
+//------------------------------------------------------------------------------------------
+
 	} else if (data[1] == USBASP_FUNC_GETCAPABILITIES) {
-    		// Байт 0: Основные возможности
-    		replyBuffer[0] = USBASP_CAP_0_TPI | USBASP_CAP_0_I2C | USBASP_CAP_0_MW;
-    
-    		// Байт 1: Дополнительные возможности
-	    	replyBuffer[1] = USBASP_CAP_1_SCK_AUTO | USBASP_CAP_1_HW_SCK;
-    
-    		// Байт 2: Резерв (0)
-    		replyBuffer[2] = 0;
-    
-    		// Байт 3: Возможности работы с памятью
-    		replyBuffer[3] = USBASP_CAP_3_FLASH | USBASP_CAP_3_EEPROM | 
-                     		 USBASP_CAP_3_FUSES | USBASP_CAP_3_LOCKBITS |
-                     		 USBASP_CAP_3_EXTENDED_ADDR | USBASP_CAP_3MHZ;
-    
+		replyBuffer[0] = USBASP_CAP_0_TPI | USBASP_CAP_0_I2C | USBASP_CAP_0_MW;
+		replyBuffer[1] = USBASP_CAP_1_SCK_AUTO | USBASP_CAP_1_HW_SCK;
+		replyBuffer[2] = 0;
+		replyBuffer[3] = USBASP_CAP_3_FLASH | USBASP_CAP_3_EEPROM |
+                 		 USBASP_CAP_3_FUSES | USBASP_CAP_3_LOCKBITS |
+                 		 USBASP_CAP_3_EXTENDED_ADDR | USBASP_CAP_3MHZ;          // 0x40 – никаких сдвигов    
     		len = 4;
 	}
-	usbMsgPtr = replyBuffer;
 
-	return len;
+    usbMsgPtr = replyBuffer;
+   return len;
 }
 
 uchar usbFunctionRead(uchar *data, uchar len)
@@ -579,6 +572,24 @@ uchar usbFunctionWrite(uchar *data, uchar len)
         	}
         	goto exit;
     	}
+
+    	/* ---------- новая ветка: CHIP ERASE ---------- */
+	if (prog_state == PROG_STATE_SPI_CHIP_ERASE) {
+        	ispEnterProgrammingMode(); // на всякий случай
+        	ispTransmit(0xAC);
+        	ispTransmit(0x80);
+        	ispTransmit(0x00);
+        	ispTransmit(0x00);
+
+        	_delay_ms(25);             // datasheet: 9–20 ms
+
+        	replyBuffer[0] = 1;        // успех
+        	usbMsgPtr      = replyBuffer;
+        	len            = 1;
+        	prog_state     = PROG_STATE_IDLE;
+                goto exit;
+    	}
+
 	/* ---------- I2C Write (минималистичная) ---------- */
 	if (prog_state == PROG_STATE_I2C_WRITE) {
     
