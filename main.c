@@ -261,24 +261,28 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
     		setupWriteOperation(data, PROG_STATE_WRITEEEPROM, 0, 0);
     		len = USB_NO_MSG;
 
-	} else if (data[1] == USBASP_FUNC_SETLONGADDRESS) {  // Функция 9
-		// data[4], data[5] - младшие 16 бит (wValue)
-	    	// data[2], data[3] - старшие 16 бит (wIndex)
-		 uint32_t addr = ((uint32_t)data[3] << 24) | ((uint32_t)data[2] << 16) |
-                   ((uint32_t)data[5] << 8) | data[4];
+	} else if (data[1] == USBASP_FUNC_SETLONGADDRESS) {
+    		// data[0], data[1], data[2], data[3] содержат 32-битный адрес
+    		uint32_t addr = ((uint32_t)data[3] << 24) |
+                    		((uint32_t)data[2] << 16) |
+                    		((uint32_t)data[1] << 8)  |
+                     		(uint32_t)data[0];
     
-    		// Вызываем вашу функцию extended addressing
-    		ispUpdateExtended(addr);
+    		if (addr >= 0x20000) {  // 128KB
+        	ispUpdateExtended(addr);
+    		}
     
-	    	replyBuffer[0] = 0;  // Успех
+    		replyBuffer[0] = 0;
     		len = 1;
 
 	} else if (data[1] == USBASP_FUNC_SETISPSCK) {
     	        prog_sck = data[2];
-    		 if (prog_sck == USBASP_ISP_SCK_AUTO) {
-        	  user_speed_requested = 0;  // Пользователь выбрал AUTO
+    	        // data[2] содержит значение скорости (0 = AUTO, >0 = конкретная скорость)
+    		 if (prog_sck == USBASP_ISP_SCK_AUTO) {  // USBASP_ISP_SCK_AUTO = 0
+        	  user_speed_requested = 0;  // AUTO режим
     		 } else {
-        	  user_speed_requested = 1;  // Пользователь явно задал скорость
+        	  // user_speed_requested = 1 только если скорость > 0
+        	  user_speed_requested = 1;  // Явно заданная скорость
     		 }
     		replyBuffer[0] = 0;
     		len = 1;
@@ -288,9 +292,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
     		replyBuffer[1] = prog_sck;           // текущая установленная скорость
     		replyBuffer[2] = last_success_speed; // предыдущая успешная скорость
     		replyBuffer[3] = sck_sw_delay;
-    		replyBuffer[4] = isp_hiaddr;
-    		replyBuffer[5] = prog_state;
-    		len = 6;
+    		len = 4;
   
 //------------------------------------------------------------------------
        
