@@ -293,19 +293,24 @@ uchar ispEnterProgrammingMode(void) {
     return 1;
 }
 
-void ispUpdateExtended(uint32_t address)
-{
-    if (address < EXTADDR_BLOCK || address >= FLASH_MAX_BYTES)
+void ispUpdateExtended(uint32_t address) {
+
+    // Если адрес < 64KB, extended адрес не нужен
+    if (address < 0x10000) {
         return;
-
-    uint8_t curr_hiaddr = (uint8_t)(address >> 17);
-
-    if (curr_hiaddr == isp_hiaddr)
+    }
+    // Вычисляем новый hiaddr (биты 17:16 адреса)
+    // address >> 17 = деление на 128КБ (0x20000)
+    uint8_t new_hi = (uint8_t)(address >> 17);
+    
+    // Если не изменилось - ничего не делаем
+    if (new_hi == isp_hiaddr) {
         return;
-
-    isp_hiaddr = curr_hiaddr;
-
-    // Отправка команды стандартными вызовами
+    }
+    
+    isp_hiaddr = new_hi;
+    
+    // Отправляем команду SETLONGADDRESS (0x4D)
     ispTransmit(0x4D);
     ispTransmit(0x00);
     ispTransmit(isp_hiaddr);
@@ -317,7 +322,7 @@ uchar ispReadFlashRaw(uint32_t address)
     ispTransmit(0x20 | ((address & 1) << 3));
     ispTransmit(address >> 9);
     ispTransmit(address >> 1);
-    return ispTransmit(0);
+    return ispTransmit(0);           
 }
 
 uchar ispReadFlash(uint32_t address)
