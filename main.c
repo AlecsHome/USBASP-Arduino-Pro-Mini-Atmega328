@@ -20,8 +20,8 @@ static uchar replyBuffer[8];
 static uchar prog_state = PROG_STATE_IDLE;
 uchar prog_sck = USBASP_ISP_SCK_AUTO; // <-- prog_sck определен
 static uchar prog_address_newmode = 0;
-static unsigned long prog_address;
-static uint16_t prog_nbytes = 0; // <-- prog_nbytes определен
+static uint32_t prog_address;  
+static uint32_t prog_nbytes = 0; // <-- prog_nbytes определен
 static uchar prog_blockflags;
 static uchar prog_pagecounter;
 static uchar spi_cs_hi = 1;
@@ -42,6 +42,7 @@ static uint8_t i2c_stop_aw = 1;
 static uint8_t prog_address_sent = 0;  // Флаг отправки адреса
 static uint8_t i2c_dev_addr = 0xFF;   // последний заданный адрес
 
+//------------------------------------------------------------------------------------------
 static void setupTransfer(uint8_t *data, uint8_t new_state) {
     prog_address = (data[3] << 8) | data[2];
     prog_nbytes  = (data[7] << 8) | data[6];
@@ -56,9 +57,12 @@ static void setupSPIState(uint8_t mode, uint8_t *data) {
 }
 
 static void setupWriteOperation(uint8_t *data, uint8_t new_state,
-                                uint8_t pagesize, uint8_t flags) {
-    if (!prog_address_newmode)
+                                uint8_t pagesize, uint8_t flags)
+{
+    if (!prog_address_newmode) {
+        /* и для Flash и для EEPROM достаточно 16-битного адреса */
         prog_address = (data[3] << 8) | data[2];
+    }
 
     prog_pagesize = pagesize;
     prog_blockflags = flags;
@@ -92,7 +96,6 @@ static void setupI2COperation(uint8_t *data, uint8_t new_state, usbMsgLen_t *len
         }
         prog_address = memory_address;
     }
-
     prog_nbytes = (data[7] << 8) | data[6];
     prog_state  = new_state;
     *len_out    = USB_NO_MSG;
@@ -100,8 +103,19 @@ static void setupI2COperation(uint8_t *data, uint8_t new_state, usbMsgLen_t *len
 
 /* -------------------------------------------------------------------------------- */
 usbMsgLen_t usbFunctionSetup(uchar data[8]) {
+        // Этот массив data[8] автоматически заполняется USB-стеком
+	// из полученного USB control transfer!
+    
+    	// data[0] = bmRequestType
+    	// data[1] = bRequest (это наш function ID: USBASP_FUNC_READEEPROM и т.д.)
+    	// data[2] = wValueL (младший байт wValue)
+    	// data[3] = wValueH (старший байт wValue)
+    	// data[4] = wIndexL (младший байт wIndex)
+    	// data[5] = wIndexH (старший байт wIndex)
+    	// data[6] = wLengthL (младший байт wLength) - размер данных
+    	// data[7] = wLengthH (старший байт wLength)
 
-   usbMsgLen_t len = 0;
+ usbMsgLen_t len = 0;
 
 	if (data[1] == USBASP_FUNC_CONNECT) {
 
@@ -120,7 +134,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
            replyBuffer[0] = rc;
 	   len = 1;
 								
-//spi --------------------------------------------------------------
+//spi ----------------------------------------------------------------------------------------
 	} else if (data[1] == USBASP_FUNC_SPI_CONNECT) {
 		ispSetSCKOption(prog_sck);
 		ledRedOn();
@@ -133,18 +147,19 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 	} else if (data[1] == USBASP_FUNC_SPI_WRITE) {
     		setupSPIState(PROG_STATE_SPI_WRITE, data);
     		len = USB_NO_MSG;
-
-	} else if (data[1] == USBASP_FUNC_SPI_CHIP_ERASE) {
-    		// НОВАЯ ФУНКЦИЯ: стирание только Flash
-    		setupSPIState(PROG_STATE_SPI_CHIP_ERASE, data);
-		len = USB_NO_MSG;    
-
-//i2c 24xx ---------------------------------------------------------
+    	
+//i2c 24xx ------------------------------------------------------------------------------------
 
 	} else if (data[1] == USBASP_FUNC_I2C_INIT) {
     		ledRedOn();
     		i2c_init();
-    
+
+       	} else if (data[1] == USBASP_FUNC_I2C_START) {
+		i2c_start();
+		
+	} else if (data[1] == USBASP_FUNC_I2C_STOP) {
+		i2c_stop();
+
 	/* ---------- WRITE_BYTE ---------- */
 	} else if (data[1] == USBASP_FUNC_I2C_WRITE_BYTE) {
     		i2c_start(i2c_dev_addr & ~1);   // START + WRITE-бит
@@ -152,12 +167,6 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
     		i2c_stop();
     		replyBuffer[0] = 0;             // статус «ОК»
     		len = 1;
-
-       	} else if (data[1] == USBASP_FUNC_I2C_START) {
-		i2c_start();
-		
-	} else if (data[1] == USBASP_FUNC_I2C_STOP) {
-		i2c_stop();
 
 	/* ---------- READ_BYTE ---------- */
 	} else if (data[1] == USBASP_FUNC_I2C_READ_BYTE) {
@@ -175,11 +184,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
     		prog_address_sent = 0;
     		setupI2COperation(data, PROG_STATE_I2C_WRITE, &len);
 
-    	} else if (data[1] == USBASP_FUNC_I2C_SETDEVICE) {   // 37
-     	 	i2c_dev_addr = data[2];   // data[2] = addr << 1
-    		replyBuffer[0]  = 0;
-    		len = 1;
-		} else if (data[1] == USBASP_FUNC_I2C_SETDEVICE) {   // 37
+	} else if (data[1] == USBASP_FUNC_I2C_SETDEVICE) {   // 37
     		// data[2] должен содержать 7-битный адрес (0x00-0x7F)
     		uint8_t addr_7bit = data[2];
     
@@ -193,7 +198,7 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
       		   }
     		 len = 1;
 
-//microwire 93xx ---------------------------------------------------------		
+//microwire 93xx ---------------------------------------------------------------------------------------------
 
 	} else if (data[1] == USBASP_FUNC_MW_WRITE) {
     		setupMicrowireOperation(data, PROG_STATE_MW_WRITE);
@@ -225,12 +230,11 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
         	len = (n > 4) ? 4 : n;
         	// replyBuffer уже заполнен
 
-//------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------
 	
 	} else if (data[1] == USBASP_FUNC_DISCONNECT) {
 		ispDisconnect();
 		ledGreenOff();
-		ledRedOff();
 
 	} else if (data[1] == USBASP_FUNC_TRANSMIT) {
 		replyBuffer[0] = ispTransmit(data[2]);
@@ -261,18 +265,25 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
     		setupWriteOperation(data, PROG_STATE_WRITEEEPROM, 0, 0);
     		len = USB_NO_MSG;
 
-	} else if (data[1] == USBASP_FUNC_SETLONGADDRESS) {
-    		// data[0], data[1], data[2], data[3] содержат 32-битный адрес
-    		uint32_t addr = ((uint32_t)data[3] << 24) |
-                    		((uint32_t)data[2] << 16) |
-                    		((uint32_t)data[1] << 8)  |
-                     		(uint32_t)data[0];
+	} else if (data[1] == USBASP_FUNC_SETLONGADDRESS) {  // Функция 9
+    		/* 
+     		* Стандартный формат USBasp:
+     		* data[4], data[5] - wValue (младшие 16 бит)
+     		* data[2], data[3] - wIndex (старшие 16 бит)
+     		*/
     
+    		uint32_t addr = ((uint32_t)data[3] << 24) |  // Старший байт wIndex
+                    ((uint32_t)data[2] << 16) |  // Младший байт wIndex  
+                    ((uint32_t)data[5] << 8)  |  // Старший байт wValue
+                     (uint32_t)data[4];          // Младший байт wValue
+    
+    		// Вызываем вашу функцию extended addressing
+    		// Ваша функция ожидает адреса ≥ 128KB
     		if (addr >= 0x20000) {  // 128KB
-        	ispUpdateExtended(addr);
+        	  ispUpdateExtended(addr);
     		}
     
-    		replyBuffer[0] = 0;
+    		replyBuffer[0] = 0;  // Успех
     		len = 1;
 
 	} else if (data[1] == USBASP_FUNC_SETISPSCK) {
@@ -292,10 +303,12 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
     		replyBuffer[1] = prog_sck;           // текущая установленная скорость
     		replyBuffer[2] = last_success_speed; // предыдущая успешная скорость
     		replyBuffer[3] = sck_sw_delay;
-    		len = 4;
-  
-//------------------------------------------------------------------------
-       
+    		replyBuffer[4] = isp_hiaddr;
+    		replyBuffer[5] = prog_state;
+    		len = 6;
+
+//------------------------------------------------------------------------------------------
+
 	} else if (data[1] == USBASP_FUNC_TPI_CONNECT) {
 		tpi_dly_cnt = data[2] | (data[3] << 8);
 
@@ -349,7 +362,6 @@ usbMsgLen_t usbFunctionSetup(uchar data[8]) {
 		len = USB_NO_MSG; /* multiple out */
 
 //------------------------------------------------------------------------------------------
-
 	} else if (data[1] == USBASP_FUNC_GETCAPABILITIES) {
 		replyBuffer[0] = USBASP_CAP_0_TPI | USBASP_CAP_0_I2C | USBASP_CAP_0_MW;
 		replyBuffer[1] = USBASP_CAP_1_SCK_AUTO | USBASP_CAP_1_HW_SCK;
@@ -579,24 +591,6 @@ uchar usbFunctionWrite(uchar *data, uchar len)
         	}
         	goto exit;
     	}
-
-    	/* ---------- новая ветка: CHIP ERASE ---------- */
-	if (prog_state == PROG_STATE_SPI_CHIP_ERASE) {
-        	ispEnterProgrammingMode(); // на всякий случай
-        	ispTransmit(0xAC);
-        	ispTransmit(0x80);
-        	ispTransmit(0x00);
-        	ispTransmit(0x00);
-
-        	_delay_ms(25);             // datasheet: 9–20 ms
-
-        	replyBuffer[0] = 1;        // успех
-        	usbMsgPtr      = replyBuffer;
-        	len            = 1;
-        	prog_state     = PROG_STATE_IDLE;
-                goto exit;
-    	}
-
 	/* ---------- I2C Write (минималистичная) ---------- */
 	if (prog_state == PROG_STATE_I2C_WRITE) {
     
