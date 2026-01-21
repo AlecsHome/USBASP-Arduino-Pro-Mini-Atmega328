@@ -190,7 +190,6 @@ void ispDisconnect() {
 	ISP_DDR &= ~((1 << ISP_RST) | (1 << ISP_SCK) | (1 << ISP_MOSI));
 	/* switch pullups off */
 	ISP_OUT &= ~((1 << ISP_RST) | (1 << ISP_SCK) | (1 << ISP_MOSI));
-        prog_sck = USBASP_ISP_SCK_AUTO;	
 }
 
 uchar ispTransmit_sw(uchar send_byte)
@@ -274,13 +273,20 @@ uchar ispEnterProgrammingMode(void) {
         return 1;
     }
     
-    // 2. Автоподбор от ВЫСОКОЙ скорости к НИЗКОЙ
-    // Проверьте в вашем коде, как определена последовательность ISP_SPEED_CNT
+    // 2. Сначала пробуем last_success_speed (если есть)
+    if (last_success_speed != USBASP_ISP_SCK_AUTO) {
+        rc = tryEnterProgMode(last_success_speed);
+        if (rc == 0) {
+            prog_sck = last_success_speed;
+            return 0;
+        }
+        // Если не удалось, сбрасываем и пробуем все
+        last_success_speed = USBASP_ISP_SCK_AUTO;
+    }
+    
+    // 3. Автоподбор от ВЫСОКОЙ скорости к НИЗКОЙ
     for (uchar i = 0; i < ISP_SPEED_CNT; i++) {
-        uchar speed = GET_SPEED(i);  // Должно быть от 3 MHz к 500 Hz
-        
-        // Пропускаем если это была last_success_speed (уже пробовали)
-        if (speed == last_success_speed) continue;
+        uchar speed = GET_SPEED(i);
         
         rc = tryEnterProgMode(speed);
         if (rc == 0) {
@@ -317,15 +323,16 @@ void ispUpdateExtended(uint32_t address) {
     ispTransmit(0x00);
 }
 
-uchar ispReadFlashRaw(uint32_t address) {
-    // Команда чтения Flash (32-битный адрес)
+uchar ispReadFlashRaw(uint32_t address)
+{
     ispTransmit(0x20 | ((address & 1) << 3));
-    ispTransmit(address >> 9);      // address[24:9] (16 бит)
-    ispTransmit(address >> 1);      // address[8:1] (8 бит)
+    ispTransmit(address >> 9);
+    ispTransmit(address >> 1);
     return ispTransmit(0);
 }
 
-uchar ispReadFlash(uint32_t address) {
+uchar ispReadFlash(uint32_t address)
+{
     ispUpdateExtended(address);
     return ispReadFlashRaw(address);
 }
@@ -347,12 +354,13 @@ uchar ispWriteFlash(uint32_t address, uint8_t data, uint8_t pollmode)
     if (data == 0xFF && ispReadFlash(address) == 0xFF) return 0;
 
     /* ---------- 3. Poll готовности ---------- */
-    for (uint8_t t = 30; t; --t) {
-        clockWait(t > 20 ? 1 : t > 10 ? 2 : 4);
+    for (uint8_t t = 32; t; --t) {
+        clockWait(t > 24 ? 1 : t > 15 ? 2 : 4);
         if (ispReadFlash(address) == data) return 0;
     }
     return 1;                 // timeout
 }
+
 uchar ispFlushPage(uint32_t address) {
 
     ispUpdateExtended(address);
@@ -363,10 +371,10 @@ uchar ispFlushPage(uint32_t address) {
     ispTransmit(0);
 
     /* Всегда проверяем запись */
-    for (uint8_t t = 25; t > 0; t--) {
-        clockWait(t > 15 ? 1 : (t > 5 ? 2 : 4));
+    for (uint8_t t = 32; t > 0; t--) {
+        clockWait(t > 24 ? 1 : (t > 15 ? 2 : 4));
         if (ispReadFlash(address) != 0xFF) {
-            return 0; // Успех
+            return 0; // УСПЕХ - байт изменился
         }
     }
     
