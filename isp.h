@@ -56,22 +56,22 @@ uchar ispTransmit_hw(uchar send_byte);
 /* enter programming mode */
 uchar ispEnterProgrammingMode();
 
-/* read byte from eeprom at given address */
-uchar ispReadEEPROM(unsigned int address);
+/* read byte from flash at given address */
+uchar ispReadFlash(uint16_t address);
 
 /* write byte to flash at given address */
 uchar ispWriteFlash(uint16_t address, uchar data, uchar pollmode); 
 
 uchar ispFlushPage(uint16_t address);
 
-/* read byte from flash at given address */
-uchar ispReadFlash(uint16_t address);
+/* read byte from eeprom at given address */
+uchar ispReadEEPROM(uint16_t address);
 
 /* write byte to eeprom at given address */
-uchar ispWriteEEPROM(unsigned int address, uchar data);
+uchar ispWriteEEPROM(uint16_t address, uchar data);
 
 /* set SCK speed. call before ispConnect! */
-void ispSetSCKOption(uchar option) ;        
+void ispSetSCKOption(uint8_t option) ;        
 
 /* */
 void spibusy(void);

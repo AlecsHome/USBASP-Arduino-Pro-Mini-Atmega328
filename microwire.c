@@ -35,20 +35,13 @@ void mwBegin(void)
 
 void mwStart(void)
 {
-    // Вернуть оригинальную реализацию без параметра
     ISP_OUT &= ~(1 << ISP_RST);  // CS = 0
     ISP_OUT &= ~(1 << ISP_SCK);  // CLK = 0
     ispDelay();
 
     ISP_OUT |= (1 << ISP_RST);   // CS = 1
-    
-    // send start bit
-    ISP_OUT |= (1 << ISP_MOSI);
     ispDelay();
-    ISP_OUT |= (1 << ISP_SCK);
-    ispDelay();
-    ISP_OUT &= ~(1 << ISP_SCK);
-    ispDelay();
+    // УБРАЛИ ОТПРАВКУ СТАРТОВОГО БИТА ОТСЮДА!
 }
 
 void mwEnd(void)
@@ -59,9 +52,10 @@ void mwEnd(void)
 
 /* -------------- core primitives -------------- */
 
-uint8_t mwSendData(uint8_t data, uint8_t bits)
+// ИСПРАВЛЕНО: uint8_t data -> uint32_t data, и 1UL для маски
+uint8_t mwSendData(uint32_t data, uint8_t bits)
 {
-    for (uint8_t mask = 1 << (bits - 1); mask; mask >>= 1) {
+    for (uint32_t mask = 1UL << (bits - 1); mask; mask >>= 1) {
         mw_clk_lo();
         if (data & mask) 
             mw_si_hi();
@@ -72,7 +66,7 @@ uint8_t mwSendData(uint8_t data, uint8_t bits)
         ispDelay();          /* high time    */
         mw_clk_lo();         /* clock low for next bit */
     }
-    return 0; // Возвращаем 0 в случае успеха
+    return 0; 
 }
 
 uint8_t mwReadByte(void)
@@ -87,6 +81,17 @@ uint8_t mwReadByte(void)
         mw_clk_lo();        /* clock low for next bit */
     }
     return val;
+}
+
+/* Чтение Dummy бита (пустой такт) перед потоком данных */
+void mwReadDummyBit(void)
+{
+    mw_clk_lo();
+    ispDelay();
+    mw_clk_hi();
+    ispDelay();
+    mw_so_read(); // Просто читаем, результат игнорируем
+    mw_clk_lo();
 }
 
 /* -------------- higher level -------------- */
