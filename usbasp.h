@@ -65,8 +65,9 @@
 #define USBASP_CAP_3_EEPROM     	0x02  // Байт 3, бит 1
 #define USBASP_CAP_3_FUSES      	0x04  // Байт 3, бит 2
 #define USBASP_CAP_3_LOCKBITS   	0x08  // Байт 3, бит 3
-#define USBASP_CAP_3_EXTENDED_ADDR 	0x80  // Байт 3, бит 7
 #define USBASP_CAP_3MHZ 	      	0x40  // Байт 3, бит 6
+#define USBASP_CAP_3_EXTENDED_ADDR 	0x80  // Байт 3, бит 7
+
 
 /* programming state */
 #define PROG_STATE_IDLE         	0
@@ -79,14 +80,12 @@
 
 #define PROG_STATE_SPI_WRITE		50
 #define PROG_STATE_SPI_READ		51
-#define PROG_STATE_SPI_CHIP_ERASE 	52
 
 #define PROG_STATE_I2C_WRITE		53
 #define PROG_STATE_I2C_READ		54
 
 #define PROG_STATE_MW_READ		57
 #define PROG_STATE_MW_WRITE		58
-
 
 // Block mode data size
 #define USBASP_READBLOCKSIZE   0xFF
