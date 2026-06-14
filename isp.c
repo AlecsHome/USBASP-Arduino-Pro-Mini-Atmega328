@@ -24,7 +24,8 @@ uint8_t last_success_speed = USBASP_ISP_SCK_3000;
 
 // Быстрое вычисление расширенного адреса без 32-битной математики
 // Эквивалент (uint8_t)(addr >> 17), но компилируется в 2 инструкции
-#define GET_EXT_ADDR(address) ( (*(((uint8_t*)&(address))+2)) >> 1 )
+#define GET_EXT_ADDR(address) (((uint8_t*)&(address))[2] >> 1)
+//#define GET_EXT_ADDR(address) (uint8_t)((((uint8_t*)&(address))[2] >> 1) & 0x7F) //лишнюю операцию AND старшие биты всегда равны 0
 
 // === БЛОК ОПРЕДЕЛЕНИЙ СКОРОСТЕЙ (ОБЯЗАТЕЛЬНО ДО ФУНКЦИЙ!) ===
 
